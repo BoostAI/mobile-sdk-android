@@ -6,7 +6,7 @@ plugins {
     id 'maven-publish'
 }
 
-def sdkVersion = '1.1.16'
+def sdkVersion = '1.1.17'
 
 group = 'com.github.BoostAI'
 version = sdkVersion

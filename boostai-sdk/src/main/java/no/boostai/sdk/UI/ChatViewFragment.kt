@@ -538,6 +538,12 @@ open class ChatViewFragment(
 
         fileUploadServiceEndpointUrl?.let { ChatBackend.fileUploadServiceEndpointUrl = it }
         userToken?.let { ChatBackend.userToken = it }
+
+        val filterValues = customConfig?.chatPanel?.header?.filters?.filterValues
+            ?: config?.chatPanel?.header?.filters?.filterValues
+        if (ChatBackend.filterValues == null && filterValues != null) {
+            ChatBackend.filterValues = filterValues
+        }
     }
 
     fun updateTranslatedMessages(config: ChatConfig?) {
@@ -733,6 +739,22 @@ open class ChatViewFragment(
 
         inflater.inflate(R.menu.chat_toolbar_menu, menu)
 
+        val selectedFilterValues = ChatBackend.filterValues
+            ?: customConfig?.chatPanel?.header?.filters?.filterValues
+            ?: ChatBackend.config?.chatPanel?.header?.filters?.filterValues
+            ?: emptyList()
+        val options = customConfig?.chatPanel?.header?.filters?.options
+            ?: ChatBackend.config?.chatPanel?.header?.filters?.options
+        val initialFilter = options?.first()
+        val hasSelectedFilterValues = selectedFilterValues?.isNotEmpty()
+
+        var currentFilter: no.boostai.sdk.ChatBackend.Objects.Filter? = null
+        if (options != null && selectedFilterValues != null) {
+            currentFilter = options.find { it.values == selectedFilterValues }
+        }
+
+        val availableFilterValues = currentFilter?.values ?: emptyList()
+
         @ColorInt val tintColor = customConfig?.chatPanel?.styling?.contrastColor
             ?: ChatBackend.config?.chatPanel?.styling?.contrastColor
             ?: ContextCompat.getColor(requireContext(), R.color.contrastColor)
@@ -757,16 +779,23 @@ open class ChatViewFragment(
 
         // Set correct color on filter item
         val filterItem = menu.findItem(R.id.action_filter)
-        filterItem.title = ChatBackend.filter?.title ?: getString(R.string.filter)
-        val s = SpannableString(filterItem.title)
-        s.setSpan(ForegroundColorSpan(tintColor), 0, s.length, 0)
-        filterItem.title = s
-
-        // Add filters as a submenu
         val filterMenu = filterItem.subMenu
         filterMenu?.clear()
-        ChatBackend.config?.chatPanel?.header?.filters?.options?.forEach {
-            filterMenu?.add(0, it.id, Menu.NONE, it.title)
+
+        val filter = currentFilter ?: initialFilter
+        if ((!hasSelectedFilterValues || (availableFilterValues.isNotEmpty() && availableFilterValues.equals(selectedFilterValues))) && filter != null) {
+            filterItem.setVisible(true)
+            filterItem.title = filter.title ?: getString(R.string.filter)
+            val s = SpannableString(filterItem.title)
+            s.setSpan(ForegroundColorSpan(tintColor), 0, s.length, 0)
+            filterItem.title = s
+
+            // Add filters as a submenu
+            options?.forEach {
+                filterMenu?.add(0, it.id, Menu.NONE, it.title)
+            }
+        } else {
+            filterItem.setVisible(false)
         }
 
         // Only show the filter selector if we have any filters
@@ -792,7 +821,7 @@ open class ChatViewFragment(
                 val filter = ChatBackend.config?.chatPanel?.header?.filters?.options?.find {
                     it.id == item.itemId
                 }
-                ChatBackend.filter = filter
+                ChatBackend.filterValues = filter?.values
                 requireActivity().invalidateOptionsMenu()
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.filterValuesChanged, filter?.values)
             }

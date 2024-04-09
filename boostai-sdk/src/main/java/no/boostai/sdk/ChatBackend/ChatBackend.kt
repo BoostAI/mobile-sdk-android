@@ -102,7 +102,7 @@ object ChatBackend {
     var pollValue: String? = null
     var pollTimer: TimerTask? = null
 
-    var filter: Filter? = null
+    var filterValues: List<String>? = null
 
     private var messageObservers = ArrayList<WeakReference<MessageObserver>>()
     private var configObservers = ArrayList<WeakReference<ConfigObserver>>()
@@ -452,6 +452,7 @@ object ChatBackend {
                 if (message.clean == null && this.clean) {
                     message.clean = true
                 }
+                message.filterValues = filterValues
             }
             is CommandResume -> {
                 if (this.clean) {
@@ -459,7 +460,7 @@ object ChatBackend {
                 }
             }
             is CommandStart -> {
-                message.filterValues = filter?.values
+                message.filterValues = filterValues
             }
         }
 
