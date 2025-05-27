@@ -95,7 +95,9 @@ open class ChatViewSettingsFragment(
         val fadeAnimation = AnimationUtils.loadAnimation(context, R.anim.fade_in_fast)
         view.animation = fadeAnimation
 
-        val requestConversationFeedback = ChatBackend.config?.chatPanel?.settings?.requestFeedback
+        val requestConversationFeedback = customConfig?.chatPanel?.settings?.requestFeedback
+            ?: ChatBackend.customConfig?.chatPanel?.settings?.requestFeedback
+            ?: ChatBackend.config?.chatPanel?.settings?.requestFeedback
             ?: ChatPanelDefaults.Settings.requestFeedback
         feedbackButton.visibility =
             if (requestConversationFeedback && !isDialog)

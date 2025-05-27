@@ -429,8 +429,13 @@ open class ChatViewFragment(
                     InputType.TYPE_TEXT_FLAG_MULTI_LINE
         editText.hint =
             if (isBlocked) null
-            else ChatBackend.config?.messages?.get(ChatBackend.languageCode)?.composePlaceholder ?:
+            else {
+                val messages = customConfig?.messages
+                    ?: ChatBackend.customConfig?.messages
+                    ?: ChatBackend.config?.messages
+                messages?.get(ChatBackend.languageCode)?.composePlaceholder ?:
                 getString(R.string.chat_input_placeholder)
+            }
         updateSubmitButtonState()
     }
 
@@ -1096,7 +1101,10 @@ open class ChatViewFragment(
             }
             else -> {
                 // Submenu was clicked
-                val filter = ChatBackend.config?.chatPanel?.header?.filters?.options?.find {
+                val options = customConfig?.chatPanel?.header?.filters?.options
+                    ?: ChatBackend.customConfig?.chatPanel?.header?.filters?.options
+                    ?: ChatBackend.config?.chatPanel?.header?.filters?.options
+                val filter = options?.find {
                     it.id == item.itemId
                 }
                 ChatBackend.filterValues = filter?.values
@@ -1229,7 +1237,9 @@ open class ChatViewFragment(
         }.isNotEmpty()
 
         val requestConversationFeedback =
-            ChatBackend.config?.chatPanel?.settings?.requestFeedback
+            customConfig?.chatPanel?.settings?.requestFeedback
+                ?: ChatBackend.customConfig?.chatPanel?.settings?.requestFeedback
+                ?: ChatBackend.config?.chatPanel?.settings?.requestFeedback
                 ?: ChatPanelDefaults.Settings.requestFeedback
         if (requestConversationFeedback && hasClientMessages)
             showFeedback()
