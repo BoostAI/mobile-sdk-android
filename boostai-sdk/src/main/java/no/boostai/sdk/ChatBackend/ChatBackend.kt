@@ -545,18 +545,18 @@ object ChatBackend {
                 if (message.clean == null && this.clean) {
                     message.clean = true
                 }
-                message.filterValues = filterValues
+
             }
             is CommandResume -> {
                 if (this.clean) {
                     message.clean = true
                 }
             }
-            is CommandStart -> {
-                message.filterValues = filterValues
-            }
             else -> {}
         }
+
+        // Set filterValues
+        message.filterValues = filterValues
 
         // Remove class discriminator key (it makes the server backend throw a 400 error)
         val data = Json { classDiscriminator = "_type" }.encodeToJsonElement(message)

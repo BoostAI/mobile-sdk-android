@@ -107,6 +107,10 @@ data class ConversationFeedback (
 sealed class ICommand {
     @Required
     abstract val command: Command
+
+    /// List of strings, e.g. ['login', 'production']. Filter values are used to filter actions in the action flow
+    @SerialName("filter_values")
+    var filterValues: List<String>? = null
 }
 
 @Serializable
@@ -145,7 +149,6 @@ class CommandStart : ICommand {
     constructor(
         userToken: String? = null,
         language: String? = null,
-        filterValues: List<String>? = null,
         contextIntentId: Int? = null,
         triggerAction: Int? = null,
         authTriggerAction: Int? = null,
@@ -158,7 +161,6 @@ class CommandStart : ICommand {
     ) {
         this.userToken = userToken
         this.language = language
-        this.filterValues = filterValues
         this.contextIntentId = contextIntentId
         this.triggerAction = triggerAction
         this.authTriggerAction = authTriggerAction
@@ -175,10 +177,6 @@ class CommandStart : ICommand {
 
     /// BCP47 code string. Examples 'en-US', 'fr-FR' and 'sv-SE'. This will cause the VA to respond in the specified language
     var language: String? = null
-
-    /// List of strings, e.g. ['login', 'production']. Filter values are used to filter actions in the action flow
-    @SerialName("filter_values")
-    var filterValues: List<String>? = null
 
     /// Itent Id to set conversation in a specific context
     @SerialName("context_intent_id")
@@ -235,7 +233,6 @@ class CommandPost : IConversation {
         userToken: String?,
         type: Type,
         clean: Boolean? = null,
-        filterValues: List<String>? = null,
         contextIntentId: Int? = null,
         skill: String? = null,
         id: String? = null,
@@ -247,7 +244,6 @@ class CommandPost : IConversation {
         this.userToken = userToken
         this.type = type
         this.clean = clean
-        this.filterValues = filterValues
         this.contextIntentId = contextIntentId
         this.skill = skill
         this.id = id
@@ -267,10 +263,6 @@ class CommandPost : IConversation {
 
     /// If true, the API will return clean text instead of HTML in all responses
     var clean: Boolean? = null
-
-    /// An array of tiler value strings. These values can be used in filtering data in the action flow
-    @SerialName("filter_values")
-    var filterValues: List<String>? = null
 
     /// Itent Id to set conversation in a specific context
     @SerialName("context_intent_id")
