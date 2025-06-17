@@ -42,6 +42,8 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
     lateinit var toolbar: Toolbar
     var customConfig: ChatConfig? = null
     var isDialog = false
+    var chatViewFragmentDelegate: ChatViewFragmentDelegate? = null
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,6 +115,6 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
         TODO("Not yet implemented")
     }
 
-    fun getChatViewFragment(): Fragment = ChatViewFragment(isDialog, customConfig)
+    fun getChatViewFragment(): Fragment = ChatViewFragment(isDialog, customConfig, chatViewFragmentDelegate, chatResponseViewURLHandlingDelegate)
 
 }

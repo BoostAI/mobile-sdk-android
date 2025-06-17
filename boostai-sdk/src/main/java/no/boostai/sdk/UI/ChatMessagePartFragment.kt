@@ -53,7 +53,8 @@ open class ChatMessagePartFragment(
     var isWelcomeMessage: Boolean = false,
     val animated: Boolean = true,
     var customConfig: ChatConfig? = null,
-    var buttonDelegate: ChatMessageButtonDelegate? = null
+    var buttonDelegate: ChatMessageButtonDelegate? = null,
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 ) : IChatMessagePartFragment(R.layout.chat_message_part),
     ChatBackend.ConfigObserver,
     ChatMessageButtonDelegate {
@@ -336,7 +337,7 @@ open class ChatMessagePartFragment(
         ChatMessageTextFragment(text, isHtml, isClient, animated, customConfig)
 
     fun getChatMessageButtonsFragment(links: ArrayList<Link>): Fragment =
-        ChatMessageButtonsFragment(links, animated, customConfig, this)
+        ChatMessageButtonsFragment(links, animated, customConfig, this, chatResponseViewURLHandlingDelegate)
 
     fun getChatMessageImageFragment(url: String): Fragment =
         ChatMessageImageFragment(url, animated)

@@ -20,7 +20,6 @@
 package no.boostai.sdk.UI
 
 import android.app.Activity
-import android.content.DialogInterface.OnClickListener
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.net.Uri
@@ -55,7 +54,8 @@ open class ChatMessageButtonFragment(
     var idx: Int = 0,
     val animated: Boolean = true,
     var customConfig: ChatConfig? = null,
-    var buttonDelegate: ChatMessageButtonDelegate? = null
+    var buttonDelegate: ChatMessageButtonDelegate? = null,
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 ) : Fragment(R.layout.chat_server_message_button),
     ChatBackend.ConfigObserver,
     Animation.AnimationListener,
@@ -138,10 +138,19 @@ open class ChatMessageButtonFragment(
                     startActivityForResult(intent, FILE_PICKER_REQUEST);
                 }
             } else link?.url?.let { url ->
-                Intent(Intent.ACTION_VIEW).let {
-                    it.data = Uri.parse(url)
-                    startActivity(it)
+                val parsedUrl = Uri.parse(url)
+                val openUrl = {
+                    Intent(Intent.ACTION_VIEW).let {
+                        it.data = parsedUrl
+                        startActivity(it)
+                    }
                 }
+
+                if (chatResponseViewURLHandlingDelegate == null ||
+                    chatResponseViewURLHandlingDelegate!!.shouldOpenUrl(parsedUrl)) {
+                    openUrl()
+                }
+
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
             } ?: link?.let {
                 buttonDelegate?.didTapActionButton()

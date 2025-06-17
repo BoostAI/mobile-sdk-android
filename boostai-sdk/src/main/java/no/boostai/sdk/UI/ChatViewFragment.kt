@@ -75,7 +75,8 @@ import java.util.UUID
 open class ChatViewFragment(
     var isDialog: Boolean = false,
     var customConfig: ChatConfig? = null,
-    var delegate: ChatViewFragmentDelegate? = null
+    var delegate: ChatViewFragmentDelegate? = null,
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 ) :
     Fragment(R.layout.chat_view),
     ChatBackend.MessageObserver,
@@ -1278,7 +1279,8 @@ open class ChatViewFragment(
         avatarUrl = lastAvatarURL,
         customConfig = customConfig,
         delegate,
-        buttonDelegate = this
+        buttonDelegate = this,
+        chatResponseViewURLHandlingDelegate = chatResponseViewURLHandlingDelegate
     )
 
     fun getHumanTypingFragment(): Fragment = ChatHumanTypingFragment()

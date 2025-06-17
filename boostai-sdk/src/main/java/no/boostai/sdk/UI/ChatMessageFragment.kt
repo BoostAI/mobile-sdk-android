@@ -48,7 +48,8 @@ open class ChatMessageFragment(
     var avatarUrl: String? = null,
     var customConfig: ChatConfig? = null,
     var delegate: ChatViewFragmentDelegate? = null,
-    var buttonDelegate: ChatMessageButtonDelegate? = null
+    var buttonDelegate: ChatMessageButtonDelegate? = null,
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 ) : Fragment(R.layout.chat_message),
     ChatBackend.ConfigObserver,
     ChatMessageButtonDelegate {
@@ -268,7 +269,8 @@ open class ChatMessageFragment(
             isWelcomeMessage,
             animated,
             customConfig,
-            this
+            this,
+            chatResponseViewURLHandlingDelegate
         )
     }
 

@@ -31,7 +31,8 @@ open class ChatMessageButtonsFragment(
     var links: ArrayList<Link>? = null,
     val animated: Boolean = true,
     var customConfig: ChatConfig? = null,
-    var buttonDelegate: ChatMessageButtonDelegate? = null
+    var buttonDelegate: ChatMessageButtonDelegate? = null,
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 ) : Fragment(R.layout.chat_server_message_buttons),
     ChatMessageButtonDelegate {
 
@@ -79,7 +80,7 @@ open class ChatMessageButtonsFragment(
         ChatMessageConsentFragment(links, animated, customConfig)
 
     fun getChatMessageButtonFragment(link: Link, index: Int): Fragment =
-        ChatMessageButtonFragment(link, index, animated, customConfig, this)
+        ChatMessageButtonFragment(link, index, animated, customConfig, this, chatResponseViewURLHandlingDelegate)
 
     override fun didTapActionButton() {
         buttonDelegate?.didTapActionButton()
