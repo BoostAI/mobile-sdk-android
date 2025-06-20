@@ -317,10 +317,12 @@ you supply a conversation id
 class CommandResume: IConversation {
     constructor(conversationId: String? = null,
                 userToken: String? = null,
-                skill: String? = null) {
+                skill: String? = null,
+                language: String? = null) {
         this.conversationId = conversationId
         this.userToken = userToken
         this.skill = skill
+        this.language = language
     }
 
     @Required
@@ -335,6 +337,9 @@ class CommandResume: IConversation {
     /// Should we skip displaying the welcome message?
     @SerialName("skip_welcome_message")
     var skipWelcomeMessage = false
+
+    /// The start language of the conversation
+    var language: String? = null
 }
 
 /**

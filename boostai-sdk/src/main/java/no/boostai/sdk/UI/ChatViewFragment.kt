@@ -371,10 +371,16 @@ open class ChatViewFragment(
                     ?: ChatPanelDefaults.Settings.triggerActionOnResume
 
                 // Skip welcome message if userToken and startTriggerActionId is defined and triggerActionOnResume is true
-                val settingsSkipWelcomeMessage = customConfig?.chatPanel?.settings?.skipWelcomeMessage ?: ChatBackend.customConfig?.chatPanel?.settings?.skipWelcomeMessage ?: false
+                val settingsSkipWelcomeMessage = customConfig?.chatPanel?.settings?.skipWelcomeMessage
+                    ?: ChatBackend.customConfig?.chatPanel?.settings?.skipWelcomeMessage
+                    ?: ChatBackend.config?.chatPanel?.settings?.skipWelcomeMessage
+                    ?: false
                 val skipWelcomeMessage = (ChatBackend.userToken != null && startTriggerActionId != null && triggerActionOnResume) || settingsSkipWelcomeMessage
+                val startLanguage = customConfig?.chatPanel?.settings?.startLanguage
+                    ?: ChatBackend.customConfig?.chatPanel?.settings?.startLanguage
+                    ?: ChatBackend.customConfig?.chatPanel?.settings?.startLanguage
 
-                val resumeCommand = CommandResume(conversationId)
+                val resumeCommand = CommandResume(conversationId, language = startLanguage)
                 resumeCommand.skipWelcomeMessage = skipWelcomeMessage
 
                 ChatBackend.resume(resumeCommand, object : ChatBackend.APIMessageResponseListener {
