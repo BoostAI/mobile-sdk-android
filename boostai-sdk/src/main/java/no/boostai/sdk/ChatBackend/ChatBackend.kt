@@ -267,6 +267,7 @@ object ChatBackend {
         val m = message ?: CommandResume()
         m.conversationId = m.conversationId
         m.userToken = m.userToken ?: userToken
+        m.customPayload = m.customPayload ?: customPayload
         m.skill = m.skill ?: skill
 
         send(m, listener)

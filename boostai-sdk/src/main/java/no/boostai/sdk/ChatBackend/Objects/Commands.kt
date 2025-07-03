@@ -317,10 +317,12 @@ you supply a conversation id
 class CommandResume: IConversation {
     constructor(conversationId: String? = null,
                 userToken: String? = null,
+                customPayload: JsonElement? = null,
                 skill: String? = null,
                 language: String? = null) {
         this.conversationId = conversationId
         this.userToken = userToken
+        this.customPayload = customPayload
         this.skill = skill
         this.language = language
     }
@@ -333,6 +335,10 @@ class CommandResume: IConversation {
 
     /// Sets the Human Chat skill for the conversation
     var skill: String? = null
+
+    /// A string that is forwarded to External API's on each request
+    @SerialName("custom_payload")
+    var customPayload: JsonElement? = null
 
     /// Should we skip displaying the welcome message?
     @SerialName("skip_welcome_message")
