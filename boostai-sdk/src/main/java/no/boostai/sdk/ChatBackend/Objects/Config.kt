@@ -75,6 +75,8 @@ class ConfigV2 (
     var linkDisplayStyle: LinkDisplayStyle? = null,
     var requestConversationFeedback: Boolean? = false,
     var rememberConversation: Boolean? = false,
+    var rememberConversationExpirationDuration: String? = null,
+    var removeRememberedConversationOnChatPanelClose: Boolean? = null,
     var fileUploadServiceEndpointUrl: String? = null,
     var fileExpirationSeconds: Int? = null,
     var filters: List<Filter>? = null,
@@ -495,6 +497,13 @@ data class Settings (
     /// Default false
     val rememberConversation: Boolean? = null,
 
+    /// How long should the app should remember conversations
+    val rememberConversationExpirationDuration: String? = null,
+
+    /// Whether the app should remove remembered conversation when panel is closed.
+    /// Default false
+    val removeRememberedConversationOnChatPanelClose: Boolean? = null,
+
     /// Whether the user should be asked for feedback when they close the panel. Default true.
     val requestFeedback: Boolean? = null,
 
@@ -555,6 +564,7 @@ class ChatPanelDefaults {
         companion object {
             const val messageFeedbackOnFirstAction = false
             const val rememberConversation = false
+            const val removeRememberedConversationOnChatPanelClose = false
             const val requestFeedback = true
             const val showLinkClickAsChatBubble = false
             const val startNewConversationOnResumeFailure = true
@@ -601,7 +611,9 @@ fun convertConfig(configV2: ConfigV2): ConfigV3 {
                 fileUploadServiceEndpointUrl = configV2.fileUploadServiceEndpointUrl,
                 fileExpirationSeconds = configV2.fileExpirationSeconds,
                 requestFeedback = configV2.requestConversationFeedback,
-                rememberConversation = configV2.rememberConversation
+                rememberConversation = configV2.rememberConversation,
+                rememberConversationExpirationDuration = configV2.rememberConversationExpirationDuration,
+                removeRememberedConversationOnChatPanelClose = configV2.removeRememberedConversationOnChatPanelClose,
             )
         )
     )

@@ -70,7 +70,9 @@ import java.io.FileOutputStream
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Date
 import java.util.UUID
+import kotlin.time.Duration
 
 open class ChatViewFragment(
     var isDialog: Boolean = false,
@@ -83,7 +85,8 @@ open class ChatViewFragment(
     ChatBackend.ConfigObserver,
     ChatViewSettingsDelegate,
     FileUploadFragment.FileUploadFragmentDelegate,
-    ChatMessageButtonDelegate {
+    ChatMessageButtonDelegate,
+    BoostUIEvents.Observer {
 
     private val FILE_PICKER_REQUEST = 847321
 
@@ -98,6 +101,7 @@ open class ChatViewFragment(
     val isBlockedKey = "isBlocked"
     val isSecureChatKey = "isSecureChat"
     val storedConversationIdKey = "conversationId"
+    val storedRememberConversationExpiryKey = "rememberConversationExpiryKey"
     
     val errorId = "error"
     val settingsFragmentId = "settings"
@@ -331,13 +335,20 @@ open class ChatViewFragment(
 
             override fun onReady(config: ChatConfig) {
                 setBackendProperties(config)
+                setupEventListeners()
 
                 // Should we resume a stored/remembered conversation?
                 val rememberConversation = customConfig?.chatPanel?.settings?.rememberConversation
                     ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversation
                     ?: ChatBackend.config?.chatPanel?.settings?.rememberConversation
                     ?: ChatPanelDefaults.Settings.rememberConversation
-                if (conversationId == null && rememberConversation) {
+                val rememberConversationExpirationDuration = customConfig?.chatPanel?.settings?.rememberConversationExpirationDuration
+                    ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversationExpirationDuration
+                    ?: ChatBackend.config?.chatPanel?.settings?.rememberConversationExpirationDuration
+                val isRememberConversationExpiryInFuture = isRememberConversationExpiryInFuture()
+
+                if (conversationId == null && rememberConversation &&
+                    (rememberConversationExpirationDuration == null || isRememberConversationExpiryInFuture)) {
                     conversationId = getStoredConversationId()
                 }
 
@@ -741,6 +752,83 @@ open class ChatViewFragment(
                 ?: ChatBackend.customConfig?.chatPanel?.settings?.customPayload
                 ?: config?.chatPanel?.settings?.customPayload
         }
+    }
+
+    fun setupEventListeners() {
+        val rememberConversation = customConfig?.chatPanel?.settings?.rememberConversation
+            ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversation
+            ?: ChatBackend.config?.chatPanel?.settings?.rememberConversation
+            ?: ChatPanelDefaults.Settings.rememberConversation
+        val rememberConversationExpirationDuration = customConfig?.chatPanel?.settings?.rememberConversationExpirationDuration
+            ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversationExpirationDuration
+            ?: ChatBackend.config?.chatPanel?.settings?.rememberConversationExpirationDuration
+
+        if (rememberConversation && rememberConversationExpirationDuration != null) {
+            BoostUIEvents.addObserver(this)
+        }
+    }
+
+    override fun onUIEventReceived(event: BoostUIEvents.Event, detail: Any?) {
+        when (event) {
+            BoostUIEvents.Event.chatPanelOpened,
+            BoostUIEvents.Event.messageSent,
+            BoostUIEvents.Event.externalLinkClicked,
+            BoostUIEvents.Event.actionLinkClicked -> {
+                val rememberConversationExpirationDuration = customConfig?.chatPanel?.settings?.rememberConversationExpirationDuration
+                    ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversationExpirationDuration
+                    ?: ChatBackend.config?.chatPanel?.settings?.rememberConversationExpirationDuration
+                rememberConversationExpirationDuration?.let {
+                    storeRememberConversationExpiry(it)
+                }
+            }
+            BoostUIEvents.Event.chatPanelClosed -> {
+                val removeRememberedConversationOnChatPanelClose = customConfig?.chatPanel?.settings?.removeRememberedConversationOnChatPanelClose
+                    ?: ChatBackend.customConfig?.chatPanel?.settings?.removeRememberedConversationOnChatPanelClose
+                    ?: ChatBackend.config?.chatPanel?.settings?.removeRememberedConversationOnChatPanelClose
+                    ?: ChatPanelDefaults.Settings.removeRememberedConversationOnChatPanelClose
+                if (removeRememberedConversationOnChatPanelClose) {
+                    removeRememberConversationExpiry()
+                }
+            }
+            else -> {}
+        }
+    }
+
+    fun storeRememberConversationExpiry(rememberConversationExpirationDuration: String?) {
+        rememberConversationExpirationDuration?.let {
+            val expiry = Duration.parse(it)
+            val newDate = Date(System.currentTimeMillis() + expiry.inWholeMilliseconds)
+
+            val sharedPref = activity?.getPreferences(Context.MODE_PRIVATE) ?: return
+            with (sharedPref.edit()) {
+                putLong(storedRememberConversationExpiryKey, newDate.time)
+                apply()
+            }
+        }
+    }
+
+    fun removeRememberConversationExpiry() {
+        val sharedPref = activity?.getPreferences(Context.MODE_PRIVATE) ?: return
+        with (sharedPref.edit()) {
+            remove(storedRememberConversationExpiryKey)
+            apply()
+        }
+    }
+
+    fun getStoredRememberConversationExpiry(): Date? {
+        val sharedPref = activity?.getPreferences(Context.MODE_PRIVATE) ?: return null
+        val time = sharedPref.getLong(storedRememberConversationExpiryKey, 0)
+        if (time > 0) {
+            return Date(time)
+        }
+
+        return null
+    }
+
+    fun isRememberConversationExpiryInFuture(): Boolean {
+        val storedExpiryDate = getStoredRememberConversationExpiry() ?: return false
+
+        return Date().before(storedExpiryDate)
     }
 
     fun updateTranslatedMessages() {
