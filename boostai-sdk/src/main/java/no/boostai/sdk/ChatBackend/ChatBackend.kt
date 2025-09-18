@@ -166,6 +166,11 @@ object ChatBackend {
     // Override default config (that usually comes from boost.ai server)
     var customConfig: ChatConfig? = null
 
+    /// Valid values can be found in the Accept-Language documentation:
+    /// https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Accept-Language
+    /// I.e. "*", "en-US, fr-FR", "fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5"
+    var acceptLanguageHeader: String? = null
+
     fun getOkHttpClientBuilder(): OkHttpClient.Builder {
         return OkHttpClient.Builder()
             .connectTimeout(60, TimeUnit.SECONDS)
@@ -589,11 +594,16 @@ object ChatBackend {
     }
 
     fun post(data: JsonElement, url: URL? = null, listener: APIMessageResponseListener? = null, responseHandler: APIMessageResponseHandler? = null) {
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url ?: getChatUrl())
             .method("POST", data.toString().toRequestBody())
             .addHeader("Content-Type", "application/json")
-            .build()
+
+        acceptLanguageHeader?.let {
+            requestBuilder.addHeader("Accept-Language", it)
+        }
+
+        val request = requestBuilder.build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {

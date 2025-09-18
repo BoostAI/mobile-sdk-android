@@ -86,7 +86,8 @@ open class ChatViewFragment(
     ChatViewSettingsDelegate,
     FileUploadFragment.FileUploadFragmentDelegate,
     ChatMessageButtonDelegate,
-    BoostUIEvents.Observer {
+    BoostUIEvents.Observer,
+    StatusMessageRetryDelegate {
 
     private val FILE_PICKER_REQUEST = 847321
 
@@ -318,7 +319,14 @@ open class ChatViewFragment(
         // Set up menu
         setHasOptionsMenu(true)
 
-        // Set up listener
+        // Update styling
+        updateStyling(ChatBackend.config)
+
+        // Start
+        start()
+    }
+
+    fun start() {
         ChatBackend.onReady(object : ChatBackend.ConfigReadyListener {
             override fun onFailure(exception: Exception) {
                 var message = exception.localizedMessage ?: "An unknown error occured"
@@ -330,7 +338,7 @@ open class ChatViewFragment(
                     }
                 }
 
-                showStatusMessage(message, true)
+                showStatusMessage(message, exception, true)
             }
 
             override fun onReady(config: ChatConfig) {
@@ -355,8 +363,6 @@ open class ChatViewFragment(
                 startOrResumeConversation(conversationId)
             }
         })
-
-        updateStyling(ChatBackend.config)
     }
 
     fun startOrResumeConversation(conversationId: String? = null) {
@@ -470,7 +476,7 @@ open class ChatViewFragment(
 
     override fun onFailure(backend: ChatBackend, error: Exception) {
         hideWaitingForAgentResponseIndicator()
-        showStatusMessage(error.localizedMessage ?: getString(R.string.unknown_error), true)
+        showStatusMessage(error.localizedMessage ?: getString(R.string.unknown_error), error, true)
     }
 
     fun handleReceivedMessage(message: APIMessage, animated: Boolean = true) {
@@ -1073,13 +1079,27 @@ open class ChatViewFragment(
         }
     }
 
-    fun showStatusMessage(message: String, isError: Boolean) {
+    fun showStatusMessage(message: String, exception: Exception? = null, isError: Boolean = false) {
+        var m = message
+        var retry = false
+        when (exception) {
+            is UnknownHostException,
+            is SocketTimeoutException,
+            is ConnectException -> {
+                m = customConfig?.messages?.get(ChatBackend.languageCode)?.chatServiceUnavailable
+                    ?: ChatBackend.customConfig?.messages?.get(ChatBackend.languageCode)?.chatServiceUnavailable
+                    ?: ChatBackend.config?.messages?.get(ChatBackend.languageCode)?.chatServiceUnavailable
+                    ?: getString(R.string.network_error_message)
+                retry = true
+            }
+        }
+
         hideStatusMessage()
         childFragmentManager
             .beginTransaction()
             .add(
                 R.id.chat_messages,
-                getStatusMessageFragment(message, isError),
+                getStatusMessageFragment(m, exception, isError, retry),
                 errorId
             )
             .commitAllowingStateLoss()
@@ -1391,8 +1411,8 @@ open class ChatViewFragment(
         delegate = delegate
     )
 
-    fun getStatusMessageFragment(message: String, isError: Boolean): Fragment =
-        StatusMessageFragment(message, isError, customConfig)
+    fun getStatusMessageFragment(message: String, exception: Exception? = null, isError: Boolean = false, retry: Boolean = false): Fragment =
+        StatusMessageFragment(message, isError, retry, customConfig, this)
 
     fun getChatViewFeedbackFragment(): Fragment =
         ChatViewFeedbackFragment(this, isDialog, customConfig)
@@ -1471,5 +1491,14 @@ open class ChatViewFragment(
             val f = fragment as? ChatMessageButtonDelegate
             f?.enableActionButtons()
         }
+    }
+
+    override fun didTapRetryButton() {
+        hideStatusMessage()
+
+        val handler = Handler(Looper.getMainLooper())
+        handler.postDelayed({
+            start()
+        }, 250)
     }
 }

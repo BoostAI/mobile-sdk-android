@@ -21,7 +21,9 @@ package no.boostai.sdk.UI
 
 import android.os.Bundle
 import android.view.View
+import android.widget.Button
 import android.widget.TextView
+import androidx.annotation.ColorInt
 import androidx.annotation.FontRes
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
@@ -30,11 +32,16 @@ import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
 import no.boostai.sdk.R
 
-open class StatusMessageFragment(var message: String? = null, var isError: Boolean = false, var customConfig: ChatConfig? = null)
+open class StatusMessageFragment(var message: String? = null,
+                                 var isError: Boolean = false,
+                                 var retry: Boolean = false,
+                                 var customConfig: ChatConfig? = null,
+                                 var retryDelegate: StatusMessageRetryDelegate? = null)
     : Fragment(R.layout.status_message) {
 
     val messageKey = "message"
     val isErrorKey = "isError"
+    val retryKey = "retry"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +50,7 @@ open class StatusMessageFragment(var message: String? = null, var isError: Boole
         bundle?.let {
             message = it.getString(messageKey)
             isError = it.getBoolean(isErrorKey)
+            retry = it.getBoolean(retryKey)
         }
     }
 
@@ -51,6 +59,7 @@ open class StatusMessageFragment(var message: String? = null, var isError: Boole
 
         outState.putString(messageKey, message)
         outState.putBoolean(isErrorKey, isError)
+        outState.putBoolean(retryKey, retry)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -63,6 +72,29 @@ open class StatusMessageFragment(var message: String? = null, var isError: Boole
         textView.textAlignment = TextView.TEXT_ALIGNMENT_CENTER
         textView.text = message
 
+        val retryButton = view.findViewById<Button>(R.id.retry_button)
+        val retryTitle = customConfig?.messages?.get(ChatBackend.languageCode)?.retry
+            ?: ChatBackend.customConfig?.messages?.get(ChatBackend.languageCode)?.retry
+            ?: ChatBackend.config?.messages?.get(ChatBackend.languageCode)?.retry
+            ?: getString(R.string.retry)
+
+        @ColorInt val primaryColor = customConfig?.chatPanel?.styling?.primaryColor
+            ?: ChatBackend.customConfig?.chatPanel?.styling?.primaryColor
+            ?: ContextCompat.getColor(requireContext(), R.color.primaryColor)
+
+        @ColorInt val contrastColor = customConfig?.chatPanel?.styling?.contrastColor
+            ?: ChatBackend.customConfig?.chatPanel?.styling?.contrastColor
+            ?: ContextCompat.getColor(requireContext(), R.color.contrastColor)
+
+        retryButton.text = retryTitle
+        retryButton.setBackgroundColor(primaryColor)
+        retryButton.setTextColor(contrastColor)
+        retryButton.visibility = if (retry) View.VISIBLE else View.GONE
+
+        retryButton.setOnClickListener({
+            retryDelegate?.didTapRetryButton()
+        })
+
         @FontRes val bodyFont = customConfig?.chatPanel?.styling?.fonts?.bodyFont
             ?: ChatBackend.customConfig?.chatPanel?.styling?.fonts?.bodyFont
             ?: ChatBackend.config?.chatPanel?.styling?.fonts?.bodyFont
@@ -71,7 +103,8 @@ open class StatusMessageFragment(var message: String? = null, var isError: Boole
             try {
                 val typeface = ResourcesCompat.getFont(requireContext().applicationContext, it)
                 textView.typeface = typeface
-            } catch (e: java.lang.Exception) {}
+                retryButton.typeface = typeface
+            } catch (_: java.lang.Exception) {}
         }
     }
 }

@@ -162,7 +162,11 @@ data class Messages (
     val uploadFileProgress: String = "Uploading ...",
 
     @SerialName("upload.file.success")
-    val uploadFileSuccess: String = "Upload successful"
+    val uploadFileSuccess: String = "Upload successful",
+
+    val chatServiceUnavailable: String = "Chat service is currently unavailable.\nPlease try again later.",
+
+    val retry: String = "Retry"
 ) : Parcelable
 
 @Serializable

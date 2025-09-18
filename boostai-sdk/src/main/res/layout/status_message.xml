@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
+    android:layout_height="wrap_content"
     android:paddingHorizontal="10dp"
-    android:layout_marginTop="10dp">
+    android:layout_marginTop="10dp"
+    android:orientation="vertical"
+    android:gravity="center_horizontal">
 
     <TextView
         android:id="@+id/text_view"
@@ -11,4 +13,12 @@
         android:layout_height="wrap_content"
         android:textColor="@android:color/holo_red_dark"/>
 
-</FrameLayout>
+    <Button
+        android:id="@+id/retry_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Retry"
+        android:visibility="gone"/>
+
+</LinearLayout>

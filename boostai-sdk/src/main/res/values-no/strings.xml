@@ -30,5 +30,6 @@
     <string name="unknown_error">En ukjent feil oppsto.</string>
     <string name="thanks_for_the_feedback">Takk for tilbakemeldingen.\nVi setter pris på at du bidrar, det hjelper oss å skape en bedre kundeopplevelse.</string>
     <string name="network_error_message">Kunne ikke koble til chat-tjenesten.</string>
+    <string name="retry">Prøv på nytt</string>
     <string name="unable_to_open_link">Kunne ikke åpne lenken.</string>
 </resources>
