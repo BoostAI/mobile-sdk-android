@@ -48,7 +48,7 @@ Add the boost.ai SDK library as a dependency in your app `build.gradle` file:
 
 ```kotlin
 dependencies { 
-  implementation 'com.github.BoostAI:mobile-sdk-android:1.2.16'
+  implementation 'com.github.BoostAI:mobile-sdk-android:1.2.17'
 }
 ```
 
@@ -71,7 +71,7 @@ Add the dependency:
 <dependency>
     <groupId>com.github.BoostAI</groupId>
     <artifactId>mobile-sdk-android</artifactId>
-    <version>1.2.16</version>
+    <version>1.2.17</version>
 </dependency>
 ```
 
@@ -471,6 +471,22 @@ class MyFragment : Fragment, BoostUIEvents.Observer {
     // Implement observer method
     override fun onUIEventReceived(event: BoostUIEvents.Event, detail: Any?) {
         println("Boost UI event: $event, detail: $detail");
+    }
+}
+```
+
+### Override URL button tap handling
+
+By default all taps on URL buttons that contain a URL (not just an action ID) will open in the default browser. You can override this behavior to fit your needs.
+
+If you want control on a per URL basis, i.e. if the virtual agent will return buttons with deep links to your own app and you want to let the system handle the URL and open your app in the correct spot, you can assign yourself as a delegate and decide if you want to handle the URL yourself or let the system handle it for you:
+
+```kotlin
+class YourClass: ..., ChatResponseViewURLHandlingDelegate {
+    override fun shouldOpenUrl(url: Uri): Boolean {
+        // Handle url if needed, return false if handled yourself
+
+        return true
     }
 }
 ```

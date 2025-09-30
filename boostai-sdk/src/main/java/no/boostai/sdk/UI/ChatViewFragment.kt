@@ -43,6 +43,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -110,6 +111,7 @@ open class ChatViewFragment(
     lateinit var chatContent: FrameLayout
     lateinit var secureChatWrapper: LinearLayout
     lateinit var secureChatTextView: TextView
+    lateinit var secureChatImageView: ImageView
     lateinit var editText: EditText
     lateinit var submitButton: ImageButton
     lateinit var characterCountTextView: TextView
@@ -209,6 +211,7 @@ open class ChatViewFragment(
         chatContent = view.findViewById(R.id.chat_content)
         secureChatWrapper = view.findViewById(R.id.secure_chat_wrapper)
         secureChatTextView = view.findViewById(R.id.secure_chat_textview)
+        secureChatImageView = view.findViewById(R.id.secure_chat_imageview)
         editText = view.findViewById(R.id.chat_input_editText)
         submitButton = view.findViewById(R.id.chat_input_submit_button)
         characterCountTextView = view.findViewById(R.id.chat_input_character_count_textview)
@@ -565,6 +568,22 @@ open class ChatViewFragment(
                         isSecureChat && messageResponses.size > 0 &&
                             messageResponses[0].source == SourceType.CLIENT
                     )
+
+            val secureChatBackgroundColor = customConfig?.chatPanel?.styling?.secureChatBannerBackgroundColor
+                ?: ChatBackend.customConfig?.chatPanel?.styling?.secureChatBannerBackgroundColor
+                ?: ChatBackend.config?.chatPanel?.styling?.secureChatBannerBackgroundColor
+            val secureChatBannerTextColor = customConfig?.chatPanel?.styling?.secureChatBannerTextColor
+                ?: ChatBackend.customConfig?.chatPanel?.styling?.secureChatBannerTextColor
+                ?: ChatBackend.config?.chatPanel?.styling?.secureChatBannerTextColor
+
+            secureChatBackgroundColor?.let {
+                secureChatWrapper.setBackgroundColor(it)
+            }
+
+            secureChatBannerTextColor?.let {
+                secureChatTextView.setTextColor(it)
+                secureChatImageView.setColorFilter(it, android.graphics.PorterDuff.Mode.SRC_IN)
+            }
 
             secureChatWrapper.visibility = if (isSecureChat) View.VISIBLE else View.GONE
         }
@@ -1475,7 +1494,7 @@ open class ChatViewFragment(
         super.onActivityResult(requestCode, resultCode, data)
     }
 
-    override fun didTapActionButton() {
+    override fun didTapActionButton(fragment: ChatMessageButtonFragment) {
         disableActionButtons()
     }
 
@@ -1486,10 +1505,10 @@ open class ChatViewFragment(
         }
     }
 
-    override fun enableActionButtons() {
+    override fun enableActionButtons(makeInteractable: Boolean) {
         for (fragment in childFragmentManager.fragments) {
             val f = fragment as? ChatMessageButtonDelegate
-            f?.enableActionButtons()
+            f?.enableActionButtons(makeInteractable)
         }
     }
 

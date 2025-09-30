@@ -340,7 +340,15 @@ data class Styling (
     val messageFeedback: MessageFeedback? = null,
 
     /// See `Fonts` definition
-    val fonts: Fonts? = null
+    val fonts: Fonts? = null,
+
+    /// Color for background of the "Secure chat" banner
+    @Serializable(with = HexColorSerializer::class)
+    @ColorInt val secureChatBannerBackgroundColor: Int? = null,
+
+    /// Color for text in the "Secure chat" banner
+    @Serializable(with = HexColorSerializer::class)
+    @ColorInt val secureChatBannerTextColor: Int? = null
 ) : Parcelable
 
 @Serializable

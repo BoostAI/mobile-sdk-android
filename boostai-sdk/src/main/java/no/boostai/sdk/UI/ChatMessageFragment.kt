@@ -296,8 +296,8 @@ open class ChatMessageFragment(
         TODO("Not yet implemented")
     }
 
-    override fun didTapActionButton() {
-        buttonDelegate?.didTapActionButton()
+    override fun didTapActionButton(fragment: ChatMessageButtonFragment) {
+        buttonDelegate?.didTapActionButton(fragment)
     }
 
     override fun disableActionButtons() {
@@ -307,10 +307,10 @@ open class ChatMessageFragment(
         }
     }
 
-    override fun enableActionButtons() {
+    override fun enableActionButtons(makeInteractable: Boolean) {
         for (fragment in childFragmentManager.fragments) {
             val f = fragment as? ChatMessageButtonDelegate
-            f?.enableActionButtons()
+            f?.enableActionButtons(makeInteractable)
         }
     }
 }

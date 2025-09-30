@@ -153,7 +153,7 @@ open class ChatMessageButtonFragment(
 
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
             } ?: link?.let {
-                buttonDelegate?.didTapActionButton()
+                buttonDelegate?.didTapActionButton(this)
 
                 ChatBackend.actionButton(it.id)
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.actionLinkClicked, it.id)
@@ -297,15 +297,18 @@ open class ChatMessageButtonFragment(
     }
     override fun onAnimationRepeat(p0: Animation?) {}
 
-    override fun didTapActionButton() {}
+    override fun didTapActionButton(fragment: ChatMessageButtonFragment) {}
 
     override fun disableActionButtons() {
         view?.setOnClickListener(null)
         view?.background?.alpha = 127
     }
 
-    override fun enableActionButtons() {
-        view?.setOnClickListener(onClickListener)
+    override fun enableActionButtons(makeInteractable: Boolean) {
         view?.background?.alpha = 255
+
+        if (makeInteractable) {
+            view?.setOnClickListener(onClickListener)
+        }
     }
 }

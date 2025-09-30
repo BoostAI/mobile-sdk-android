@@ -38,6 +38,7 @@ open class ChatMessageButtonsFragment(
 
     val linksKey = "links"
     val customConfigKey = "customConfig"
+    var lastTappedButton: ChatMessageButtonFragment? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,8 +83,9 @@ open class ChatMessageButtonsFragment(
     fun getChatMessageButtonFragment(link: Link, index: Int): Fragment =
         ChatMessageButtonFragment(link, index, animated, customConfig, this, chatResponseViewURLHandlingDelegate)
 
-    override fun didTapActionButton() {
-        buttonDelegate?.didTapActionButton()
+    override fun didTapActionButton(fragment: ChatMessageButtonFragment) {
+        lastTappedButton = fragment
+        buttonDelegate?.didTapActionButton(fragment)
     }
 
     override fun disableActionButtons() {
@@ -93,10 +95,15 @@ open class ChatMessageButtonsFragment(
         }
     }
 
-    override fun enableActionButtons() {
+    override fun enableActionButtons(makeInteractable: Boolean) {
+        lastTappedButton?.let {
+            it.enableActionButtons(false)
+            return
+        }
+
         for (fragment in childFragmentManager.fragments) {
             val f = fragment as? ChatMessageButtonDelegate
-            f?.enableActionButtons()
+            f?.enableActionButtons(true)
         }
     }
 }
