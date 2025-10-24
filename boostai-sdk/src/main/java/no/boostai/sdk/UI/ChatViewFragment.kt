@@ -1263,11 +1263,8 @@ open class ChatViewFragment(
 
                 // Remove all message fragments
                 val transaction = childFragmentManager.beginTransaction()
-
-                responses.forEach {
-                    val fragment = childFragmentManager.findFragmentByTag(it.id)
-
-                    if (fragment != null && fragment.isAdded) transaction.remove(fragment)
+                childFragmentManager.fragments.forEach {
+                    if (it != null && it.isAdded) transaction.remove(it)
                 }
                 transaction.commitAllowingStateLoss()
                 // Empty the responses list
