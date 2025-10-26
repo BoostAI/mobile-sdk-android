@@ -1,5 +1,5 @@
 # BoostAI SDK
-boost.ai named a leader in the 2025 Gartner® Magic Quadrant™ for Conversational AI Platforms
+[boost.ai](https://boost.ai) named a leader in the 2025 Gartner® Magic Quadrant™ for Conversational AI Platforms
 
 ## Table of Contents
 * [License](#license)
