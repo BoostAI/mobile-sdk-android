@@ -151,6 +151,12 @@ open class ChatMessageButtonFragment(
                     openUrl()
                 }
 
+                // Notify backend about URL button click
+                link?.id?.let {
+                    ChatBackend.urlButton(it)
+                }
+
+                // Notify UI observers about URL button click
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
             } ?: link?.let {
                 buttonDelegate?.didTapActionButton(this)
