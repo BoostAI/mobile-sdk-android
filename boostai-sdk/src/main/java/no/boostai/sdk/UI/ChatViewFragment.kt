@@ -332,6 +332,8 @@ open class ChatViewFragment(
     fun start() {
         ChatBackend.onReady(object : ChatBackend.ConfigReadyListener {
             override fun onFailure(exception: Exception) {
+                if (!isAdded) return
+
                 var message = exception.localizedMessage ?: "An unknown error occured"
                 when (exception) {
                     is UnknownHostException,
@@ -345,6 +347,8 @@ open class ChatViewFragment(
             }
 
             override fun onReady(config: ChatConfig) {
+                if (!isAdded) return
+
                 setBackendProperties(config)
                 setupEventListeners()
 
@@ -405,6 +409,8 @@ open class ChatViewFragment(
 
                 ChatBackend.resume(resumeCommand, object : ChatBackend.APIMessageResponseListener {
                     override fun onFailure(exception: Exception) {
+                        if (!isAdded) return
+
                         animateMessages = true
 
                         val startNewMessage =
@@ -417,6 +423,8 @@ open class ChatViewFragment(
                     }
 
                     override fun onResponse(apiMessage: APIMessage) {
+                        if (!isAdded) return
+
                         // Enable animation of new messages (conversation has been resumed at this point)
                         animateMessages = true
 
@@ -472,12 +480,16 @@ open class ChatViewFragment(
     }
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) {
+        if (!isAdded) return
+
         updateStyling(config)
         setBackendProperties(config)
         activity?.invalidateOptionsMenu()
     }
 
     override fun onFailure(backend: ChatBackend, error: Exception) {
+        if (!isAdded) return
+
         hideWaitingForAgentResponseIndicator()
         showStatusMessage(error.localizedMessage ?: getString(R.string.unknown_error), error, true)
     }
@@ -821,14 +833,16 @@ open class ChatViewFragment(
 
     fun storeRememberConversationExpiry(rememberConversationExpirationDuration: String?) {
         rememberConversationExpirationDuration?.let {
-            val expiry = Duration.parse(it)
-            val newDate = Date(System.currentTimeMillis() + expiry.inWholeMilliseconds)
+            try {
+                val expiry = Duration.parse(it)
+                val newDate = Date(System.currentTimeMillis() + expiry.inWholeMilliseconds)
 
-            val sharedPref = activity?.getPreferences(Context.MODE_PRIVATE) ?: return
-            with (sharedPref.edit()) {
-                putLong(storedRememberConversationExpiryKey, newDate.time)
-                apply()
-            }
+                val sharedPref = activity?.getPreferences(Context.MODE_PRIVATE) ?: return
+                with(sharedPref.edit()) {
+                    putLong(storedRememberConversationExpiryKey, newDate.time)
+                    apply()
+                }
+            } catch (_: IllegalArgumentException) {}
         }
     }
 
@@ -1261,6 +1275,8 @@ open class ChatViewFragment(
             override fun onResponse(apiMessage: APIMessage) {
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.conversationDeleted, existingConversationId)
 
+                if (!isAdded) return
+
                 // Remove all message fragments
                 val transaction = childFragmentManager.beginTransaction()
                 childFragmentManager.fragments.forEach {
@@ -1474,11 +1490,15 @@ open class ChatViewFragment(
                 val fileUpload = FileUpload(outFile, name, mimeType)
                 ChatBackend.uploadFilesToAPI(listOf(fileUpload), fileExpirationSeconds, object : ChatBackend.APIFileUploadResponseListener {
                     override fun onFailure(exception: Exception) {
+                        if (!isAdded) return
+
                         pendingFileUploads.remove(pendingFile)
                         pendingFileUploads.add(File(name, mimeType, "", false, true))
                         renderFileUploads()
                     }
                     override fun onResponse(files: List<File>) {
+                        if (!isAdded) return
+
                         pendingFileUploads.remove(pendingFile)
                         pendingFileUploads.addAll(files)
                         renderFileUploads()
