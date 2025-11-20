@@ -26,13 +26,14 @@
         android:text=""
         android:textSize="17sp"/>
 
-    <com.google.android.material.progressindicator.CircularProgressIndicator
+    <ProgressBar
         android:id="@+id/file_upload_progress_indicator"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:layout_marginStart="15dp"
         android:indeterminate="true"
-        app:indicatorColor="@color/textColor"
+        android:indeterminateTint="@color/textColor"
+        android:indeterminateTintMode="src_in"
         app:indicatorSize="20dp"
         app:trackThickness="2dp" />
 

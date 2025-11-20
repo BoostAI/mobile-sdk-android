@@ -4,11 +4,11 @@ import android.os.Bundle
 import android.view.View
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.annotation.FontRes
 import androidx.core.content.res.ResourcesCompat
 import androidx.fragment.app.Fragment
-import com.google.android.material.progressindicator.CircularProgressIndicator
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.File
 import no.boostai.sdk.R
@@ -16,7 +16,7 @@ import no.boostai.sdk.R
 open class FileUploadFragment(var file: File) : Fragment(R.layout.file_upload) {
     private lateinit var fileImageView: ImageView
     private lateinit var textView: TextView
-    private lateinit var progressIndicator: CircularProgressIndicator
+    private lateinit var progressIndicator: ProgressBar
     private lateinit var errorImageView: ImageView
     private lateinit var checkmarkImageView: ImageView
     private lateinit var removeButton: ImageButton
