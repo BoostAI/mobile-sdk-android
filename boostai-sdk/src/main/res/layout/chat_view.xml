@@ -129,7 +129,6 @@
                                     android:layout_weight="1"
                                     android:background="@null"
                                     android:backgroundTint="@color/textColor"
-                                    android:hint="@string/chat_input_placeholder"
                                     android:maxLength="110"
                                     android:minLines="1"
                                     android:paddingTop="4dp"

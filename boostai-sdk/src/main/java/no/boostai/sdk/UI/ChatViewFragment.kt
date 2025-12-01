@@ -468,8 +468,7 @@ open class ChatViewFragment(
                 val messages = customConfig?.messages
                     ?: ChatBackend.customConfig?.messages
                     ?: ChatBackend.config?.messages
-                messages?.get(ChatBackend.languageCode)?.composePlaceholder ?:
-                getString(R.string.chat_input_placeholder)
+                messages?.get(ChatBackend.languageCode)?.composePlaceholder
             }
         updateSubmitButtonState()
     }
