@@ -100,7 +100,7 @@ open class ChatMessageTextFragment(
                 val url = matcher.group()
                 val index = text?.indexOf(url) ?: -1
                 // Check that the URL is not already a link
-                if (index >= 6 && text!!.substring(index - 6, index) != "href=\"") {
+                if (index >= 6 && text!!.substring(index - 6, index) != "href=\"" && text!!.substring(index - 1, index) != "@") {
                     text = text?.replaceFirst(
                         url,
                         "<a href=\"" + url + "\">" + url + "</a>"
