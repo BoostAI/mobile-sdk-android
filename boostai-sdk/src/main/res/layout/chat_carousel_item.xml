@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="200dp"
+    android:layout_height="wrap_content"
+    android:layout_marginEnd="8dp"
+    android:background="@drawable/rounded_card"
+    android:clipToOutline="true"
+    android:orientation="vertical">
+
+    <ImageView
+        android:id="@+id/carousel_item_image"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:scaleType="fitXY"
+        android:contentDescription="@string/image" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/carousel_item_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/carousel_item_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textSize="14sp"
+            android:lines="2"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/carousel_item_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/rounded_alt"
+            android:gravity="center"
+            android:paddingVertical="9dp"
+            android:paddingHorizontal="15dp"
+            android:textColor="@color/white"
+            android:textSize="17sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            tools:text="Go to website" />
+
+    </LinearLayout>
+
+</LinearLayout>

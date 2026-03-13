@@ -223,6 +223,57 @@ class GenericCard : Parcelable {
     val template: String? = null
 }
 
+/**
+Serializer for buttonActionId which can be a string, int, or object {"id": 3}
+ */
+object ButtonActionIdSerializer : kotlinx.serialization.KSerializer<String?> {
+    override val descriptor: SerialDescriptor
+        get() = PrimitiveSerialDescriptor("ButtonActionId", PrimitiveKind.STRING)
+
+    override fun deserialize(decoder: Decoder): String? {
+        val jsonDecoder = decoder as? kotlinx.serialization.json.JsonDecoder ?: return null
+        return when (val element = jsonDecoder.decodeJsonElement()) {
+            is kotlinx.serialization.json.JsonPrimitive -> element.content
+            is kotlinx.serialization.json.JsonObject -> element["id"]?.let {
+                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+            else -> null
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: String?) {
+        if (value != null) encoder.encodeString(value)
+    }
+}
+
+/**
+Carousel element within a carousel template
+ */
+@Serializable
+@Parcelize
+data class CarouselElement(
+    val id: String? = null,
+    val title: String? = null,
+    val body: String? = null,
+    val imageUrl: String? = null,
+    val imageAltText: String? = null,
+    val buttonText: String? = null,
+    val buttonHref: String? = null,
+    @Serializable(with = ButtonActionIdSerializer::class)
+    val buttonActionId: String? = null
+) : Parcelable
+
+/**
+Carousel JSON template
+ */
+@Serializable
+@Parcelize
+data class CarouselTemplate(
+    val template: String? = null,
+    val elements: List<CarouselElement> = emptyList(),
+    val emitEvent: @WriteWith<JsonElementParceler> JsonElement? = null
+) : Parcelable
+
 @Serializable
 @Parcelize
 data class Payload (
@@ -232,7 +283,8 @@ data class Payload (
     val source: String? = null,
     val fullScreen: Boolean? = null,
     val json: @WriteWith<JsonElementParceler> JsonElement? = null,
-    val links: ArrayList<Link>? = null
+    val links: ArrayList<Link>? = null,
+    val style: String? = null
 ) : Parcelable
 
 /**

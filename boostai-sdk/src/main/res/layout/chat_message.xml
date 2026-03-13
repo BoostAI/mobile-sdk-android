@@ -12,7 +12,8 @@
         android:layout_marginEnd="10dp"
         android:background="@drawable/rounded"
         android:contentDescription="@string/avatar"
-        android:scaleType="centerCrop" />
+        android:scaleType="centerCrop"
+        android:elevation="4dp" />
 
     <LinearLayout
         android:id="@+id/chat_message_parts"

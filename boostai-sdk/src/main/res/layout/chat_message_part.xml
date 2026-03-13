@@ -16,27 +16,64 @@
         android:orientation="vertical" />
 
     <LinearLayout
-        android:id="@+id/chat_message_feedback"
-        android:layoutDirection="rtl"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content">
+        android:id="@+id/chat_message_feedback_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="top"
+        android:visibility="gone">
 
-        <ImageButton
-            android:background="@drawable/ic_thumbs_down"
-            android:id="@+id/chat_message_feedback_negative"
-            android:contentDescription="@string/not_satistifed_with_answer"
-            android:layout_marginTop="6dp"
-            android:layout_width="16dp"
-            android:layout_height="16dp" />
+        <LinearLayout
+            android:id="@+id/chat_message_generated_by_ai"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
 
-        <ImageButton
-            android:background="@drawable/ic_thumbs_up"
-            android:id="@+id/chat_message_feedback_positive"
-            android:contentDescription="@string/satistifed_with_answer"
-            android:layout_marginStart="8dp"
-            android:layout_marginTop="2dp"
-            android:layout_width="16dp"
-            android:layout_height="16dp" />
+            <ImageView
+                android:id="@+id/chat_message_generated_by_ai_icon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_generated_by_ai"
+                android:contentDescription="@string/generated_by_ai" />
+
+            <TextView
+                android:id="@+id/chat_message_generated_by_ai_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:textSize="12sp"
+                android:textColor="#999999"
+                android:text="@string/generated_by_ai" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/chat_message_feedback"
+            android:layoutDirection="rtl"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+
+            <ImageButton
+                android:background="@drawable/ic_thumbs_down"
+                android:id="@+id/chat_message_feedback_negative"
+                android:contentDescription="@string/not_satistifed_with_answer"
+                android:layout_marginTop="6dp"
+                android:layout_width="16dp"
+                android:layout_height="16dp" />
+
+            <ImageButton
+                android:background="@drawable/ic_thumbs_up"
+                android:id="@+id/chat_message_feedback_positive"
+                android:contentDescription="@string/satistifed_with_answer"
+                android:layout_marginStart="8dp"
+                android:layout_marginTop="2dp"
+                android:layout_width="16dp"
+                android:layout_height="16dp" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

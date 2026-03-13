@@ -31,4 +31,5 @@
     <string name="network_error_message">Kunne ikke koble til chat-tjenesten.</string>
     <string name="retry">Prøv på nytt</string>
     <string name="unable_to_open_link">Kunne ikke åpne lenken.</string>
+    <string name="generated_by_ai">Generert av AI</string>
 </resources>
