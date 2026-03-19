@@ -22,12 +22,19 @@ package no.boostai.sdkexample
 import android.content.res.ColorStateList
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
+import androidx.core.graphics.ColorUtils
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentPagerAdapter
 import androidx.viewpager.widget.ViewPager
+import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.tabs.TabLayout
 import kotlinx.serialization.json.JsonElement
 import no.boostai.sdk.ChatBackend.ChatBackend
@@ -40,12 +47,22 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     BoostUIEvents.Observer,
     ChatBackend.EventObserver {
 
+    private var appBarLayout: AppBarLayout? = null
     private var toolbar: Toolbar? = null
     private var viewPager: ViewPager? = null
     private var tabLayout: TabLayout? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        enableEdgeToEdge()
+
+        appBarLayout = findViewById(R.id.app_bar_layout)
+        ViewCompat.setOnApplyWindowInsetsListener(appBarLayout!!) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(top = insets.top)
+            windowInsets
+        }
 
         ChatBackend.domain = "your-name.boost.ai" // Replace with your boost.ai server domain name, i.e. "your-name.boost.ai"
         ChatBackend.languageCode = "en-US"
@@ -77,7 +94,10 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         viewPager = findViewById(R.id.view_pager)
         tabLayout = findViewById(R.id.tab_layout)
 
-        tabLayout?.background = ColorDrawable(getColor(R.color.purple))
+        val defaultColor = getColor(R.color.purple)
+        appBarLayout?.background = ColorDrawable(defaultColor)
+        tabLayout?.background = ColorDrawable(defaultColor)
+        applyStatusBarStyling(defaultColor, getColor(R.color.white))
 
         // Create viewPager adapter
         val adapter = ViewPagerAdapter(supportFragmentManager)
@@ -133,17 +153,32 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
     private fun updateStyling(config: ChatConfig?) {
         if (config == null) return
 
-        config.chatPanel?.styling?.primaryColor?.let {
+        val primaryColor = config.chatPanel?.styling?.primaryColor
+        val contrastColor = config.chatPanel?.styling?.contrastColor
+
+        primaryColor?.let {
             val primaryColorDrawable = ColorDrawable(it)
+            appBarLayout?.background = ColorDrawable(it)
             toolbar?.background = primaryColorDrawable
             tabLayout?.background = primaryColorDrawable
             viewPager?.background = primaryColorDrawable
+
+            applyStatusBarStyling(it, contrastColor ?: getColor(R.color.white))
         }
 
-        config.chatPanel?.styling?.contrastColor?.let { contrastColor ->
-            tabLayout?.tabTextColors = ColorStateList.valueOf(contrastColor)
-            tabLayout?.setSelectedTabIndicatorColor(contrastColor)
+        contrastColor?.let {
+            tabLayout?.tabTextColors = ColorStateList.valueOf(it)
+            tabLayout?.setSelectedTabIndicatorColor(it)
         }
+    }
+
+    private fun applyStatusBarStyling(backgroundColor: Int, contrastColor: Int) {
+        @Suppress("DEPRECATION")
+        window.statusBarColor = backgroundColor
+        // Use contrastColor to match app bar text: light contrastColor (e.g. white) means
+        // dark background, so use light (white) status bar icons, and vice versa
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars =
+            ColorUtils.calculateLuminance(contrastColor) < 0.5
     }
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) {

@@ -22,8 +22,11 @@ package no.boostai.sdk.UI
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.annotation.DrawableRes
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
 import no.boostai.sdk.R
@@ -62,6 +65,17 @@ open class AgentAvatarFragment(
         super.onViewCreated(view, savedInstanceState)
 
         imageView = view.findViewById(R.id.agent_avatar_imageview)
+
+        val originalBottomMargin = (imageView.layoutParams as FrameLayout.LayoutParams).bottomMargin
+        val originalEndMargin = (imageView.layoutParams as FrameLayout.LayoutParams).marginEnd
+        ViewCompat.setOnApplyWindowInsetsListener(view) { _, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val lp = imageView.layoutParams as FrameLayout.LayoutParams
+            lp.bottomMargin = originalBottomMargin + insets.bottom
+            lp.marginEnd = originalEndMargin + insets.right
+            imageView.layoutParams = lp
+            windowInsets
+        }
 
         avatarImageResource?.let { imageView.setImageResource(it) }
         imageView.setOnClickListener {

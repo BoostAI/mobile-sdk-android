@@ -23,10 +23,16 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.Html
 import android.view.View
+import androidx.activity.enableEdgeToEdge
 import androidx.annotation.ColorInt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
@@ -48,7 +54,15 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        enableEdgeToEdge()
+
         toolbar = findViewById(R.id.chat_view_toolbar)
+
+        ViewCompat.setOnApplyWindowInsetsListener(toolbar) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.updatePadding(top = insets.top)
+            windowInsets
+        }
         customConfig = intent.getParcelableExtra(CUSTOM_CONFIG)
         isDialog = intent.getBooleanExtra(IS_DIALOG, false)
 
@@ -69,6 +83,15 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
             .commitAllowingStateLoss()
         ChatBackend.addConfigObserver(this)
         updateStyling(ChatBackend.config)
+
+        // Apply initial status bar styling based on toolbar color
+        val initialPrimaryColor = customConfig?.chatPanel?.styling?.primaryColor
+            ?: ChatBackend.customConfig?.chatPanel?.styling?.primaryColor
+            ?: ContextCompat.getColor(this, R.color.primaryColor)
+        val initialContrastColor = customConfig?.chatPanel?.styling?.contrastColor
+            ?: ChatBackend.customConfig?.chatPanel?.styling?.contrastColor
+            ?: ContextCompat.getColor(this, R.color.contrastColor)
+        applyStatusBarStyling(initialPrimaryColor, initialContrastColor)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -99,6 +122,8 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
 
         supportActionBar?.setBackgroundDrawable(ColorDrawable(primaryColor))
 
+        applyStatusBarStyling(primaryColor, contrastColor)
+
         val title = customConfig?.chatPanel?.header?.title
             ?: ChatBackend.customConfig?.chatPanel?.header?.title
             ?: customConfig?.messages?.get(ChatBackend.languageCode)?.headerText
@@ -107,6 +132,15 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
         supportActionBar?.title =
             Html.fromHtml("<font color=\"#" + Integer.toHexString(contrastColor).substring(2) + "\">" + title + "</font>")
         supportActionBar?.setDisplayShowTitleEnabled(title != null)
+    }
+
+    private fun applyStatusBarStyling(@ColorInt backgroundColor: Int, @ColorInt contrastColor: Int) {
+        @Suppress("DEPRECATION")
+        window.statusBarColor = backgroundColor
+        // Use contrastColor to determine icon appearance: light contrastColor (e.g. white text)
+        // means dark background, so use light (white) status bar icons
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars =
+            ColorUtils.calculateLuminance(contrastColor) < 0.5
     }
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) = updateStyling(config)

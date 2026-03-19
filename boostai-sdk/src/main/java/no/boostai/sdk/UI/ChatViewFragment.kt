@@ -52,6 +52,9 @@ import androidx.annotation.FontRes
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.drawable.DrawableCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
@@ -229,6 +232,13 @@ open class ChatViewFragment(
         chatInputInner.background.setTint(
             ContextCompat.getColor(requireContext(), android.R.color.white)
         )
+
+        val inputWrapperOriginalPaddingBottom = chatInputWrapper.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(chatInputWrapper) { v, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(bottom = inputWrapperOriginalPaddingBottom + insets.bottom)
+            windowInsets
+        }
 
         scrollView.isSmoothScrollingEnabled = true
         editText.addTextChangedListener(object : TextWatcher {
