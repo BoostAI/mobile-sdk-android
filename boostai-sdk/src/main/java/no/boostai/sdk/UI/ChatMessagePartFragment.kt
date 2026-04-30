@@ -374,7 +374,7 @@ open class ChatMessagePartFragment(
     }
 
     fun getChatMessageTextFragment(text: String, isHtml: Boolean): Fragment =
-        ChatMessageTextFragment(text, isHtml, isClient, animated, customConfig)
+        ChatMessageTextFragment(text, isHtml, isClient, animated, customConfig, chatResponseViewURLHandlingDelegate)
 
     fun getChatMessageButtonsFragment(links: ArrayList<Link>): Fragment =
         ChatMessageButtonsFragment(links, animated, customConfig, this, chatResponseViewURLHandlingDelegate)

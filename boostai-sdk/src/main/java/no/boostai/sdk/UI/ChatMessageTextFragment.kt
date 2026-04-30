@@ -48,7 +48,8 @@ open class ChatMessageTextFragment(
     var isHtml: Boolean = false,
     var isClient: Boolean = false,
     val animated: Boolean = true,
-    var customConfig: ChatConfig? = null
+    var customConfig: ChatConfig? = null,
+    var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 ) : Fragment(R.layout.chat_message_text_fragment),
     ChatBackend.ConfigObserver {
 
@@ -129,15 +130,21 @@ open class ChatMessageTextFragment(
                     }
                 } else {
                     try {
-                        Intent(Intent.ACTION_VIEW).let {
-                            it.setData(Uri.parse(url))
-                            startActivity(it)
+                        val uri = Uri.parse(url)
+
+                        if (chatResponseViewURLHandlingDelegate == null ||
+                            chatResponseViewURLHandlingDelegate!!.shouldOpenUrl(uri)) {
+
+                            Intent(Intent.ACTION_VIEW).let {
+                                it.setData(uri)
+                                startActivity(it)
+                            }
+
+                            BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
                         }
                     } catch (e: ActivityNotFoundException) {
                         Toast.makeText(requireContext(), R.string.network_error_message, Toast.LENGTH_SHORT).show()
                     }
-
-                    BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
                 }
             }
         } else textView.text = text
