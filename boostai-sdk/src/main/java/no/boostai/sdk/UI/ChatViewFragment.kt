@@ -56,6 +56,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
+import kotlinx.serialization.json.JsonElement
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
 import no.boostai.sdk.ChatBackend.Objects.ChatPanelDefaults
@@ -139,6 +140,23 @@ open class ChatViewFragment(
     var isSecureChat = false
     var conversationReference: String? = null
     var conversationId: String? = null
+
+    /**
+     * Whether the conversation should be started automatically when the view is created.
+     *
+     * Defaults to `true`, which preserves the historical behaviour of starting (or resuming) the
+     * conversation from [onViewCreated].
+     *
+     * Set this to `false` when the host app needs to assign [ChatBackend.userToken] and/or
+     * [ChatBackend.customPayload] *before* the first START/RESUME is sent — for example when the
+     * token/payload is fetched asynchronously (SSO). These values are snapshotted at the moment the
+     * START/RESUME command is built, so if the auto-start chain runs before they are set the
+     * conversation is created with an empty `custom_payload`. With this flag set to `false` the host
+     * is responsible for calling [start] (or `start(userToken, customPayload)`) once the values are
+     * in place.
+     */
+    var startConversationOnLoad: Boolean = true
+
     var pendingFileUploads: ArrayList<File> = ArrayList()
     var pendingFileUploadFragments: ArrayList<FileUploadFragment> = ArrayList()
 
@@ -336,10 +354,26 @@ open class ChatViewFragment(
         updateStyling(ChatBackend.config)
 
         // Start
-        start()
+        if (startConversationOnLoad) {
+            start()
+        }
     }
 
-    fun start() {
+    /**
+     * Start (or resume) the conversation.
+     *
+     * @param userToken When non-null, assigned to [ChatBackend.userToken] *before* the START/RESUME
+     * command is built. Use this to guarantee the token is present in the snapshot taken when the
+     * command is serialized.
+     * @param customPayload When non-null, assigned to [ChatBackend.customPayload] *before* the
+     * START/RESUME command is built. Use this to guarantee the payload is present in the snapshot —
+     * this is the supported way to avoid an empty `custom_payload` when the value is resolved
+     * asynchronously.
+     */
+    fun start(userToken: String? = null, customPayload: JsonElement? = null) {
+        userToken?.let { ChatBackend.userToken = it }
+        customPayload?.let { ChatBackend.customPayload = it }
+
         ChatBackend.onReady(object : ChatBackend.ConfigReadyListener {
             override fun onFailure(exception: Exception) {
                 if (!isAdded) return

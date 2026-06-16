@@ -48,7 +48,7 @@ Add the boost.ai SDK library as a dependency in your app `build.gradle` file:
 
 ```kotlin
 dependencies { 
-  implementation 'com.github.BoostAI:mobile-sdk-android:1.2.27'
+  implementation 'com.github.BoostAI:mobile-sdk-android:1.2.28'
 }
 ```
 
@@ -71,7 +71,7 @@ Add the dependency:
 <dependency>
     <groupId>com.github.BoostAI</groupId>
     <artifactId>mobile-sdk-android</artifactId>
-    <version>1.2.27</version>
+    <version>1.2.28</version>
 </dependency>
 ```
 
@@ -329,6 +329,42 @@ Intent(mContext, ChatViewActivity::class.java).let { intent ->
 ### ChatViewFragment
 
 The `ChatViewFragment` is the main entry point for the chat view. It can be subclassed for fine-grained control, or you can set and override properties and assign yourself as a delegate to configure most of the normal use cases.
+
+### Authenticated / fresh conversation on every open
+
+`ChatBackend.userToken` and `ChatBackend.customPayload` are **snapshotted at the moment the START/RESUME command is built** — i.e. when the conversation is started or resumed. By default `ChatViewFragment` starts (or resumes) the conversation automatically from `onViewCreated`. If your token/payload is resolved **asynchronously** (e.g. SSO), the auto-start chain can run *before* you have assigned these values, and the conversation will be created with an empty `custom_payload` (this is most visible on cold starts).
+
+To guarantee the values are present, set `startConversationOnLoad = false` and start the conversation yourself once the token/payload is ready:
+
+```kotlin
+val chatViewFragment = ChatViewFragment()
+chatViewFragment.startConversationOnLoad = false
+
+// Attach the fragment, then once the async token has resolved:
+fetchAccessToken { accessToken, instrumentContext ->
+    // Option 1 — assign on the backend, then start():
+    ChatBackend.userToken = accessToken
+    ChatBackend.customPayload = instrumentContext
+    chatViewFragment.start()
+
+    // Option 2 — pass them straight into start() (assigned atomically before the command is built):
+    chatViewFragment.start(userToken = accessToken, customPayload = instrumentContext)
+}
+```
+
+For a **fresh** authenticated conversation on every open, clear the previous session before re-arming the token/payload. `stop()` always sends a STOP command; when it completes (on success or failure) it clears local state (`resetConversationState()`, which nulls `userToken`/`conversationId`/`messages`) if the platform allows conversation deletion (`allowDeleteConversation`). The reset runs once the response has been processed, so re-assign `userToken`/`customPayload` inside the `stop()` listener before starting a new conversation:
+
+```kotlin
+chatViewFragment.startConversationOnLoad = false
+ChatBackend.userToken = accessToken            // stop() uses this to target the previous session
+ChatBackend.stop(listener = object : ChatBackend.APIMessageResponseListener {
+    override fun onFailure(exception: Exception) {}
+    override fun onResponse(apiMessage: APIMessage) {
+        // resetConversationState() has run here — re-arm before starting:
+        chatViewFragment.start(userToken = accessToken, customPayload = instrumentContext)
+    }
+})
+```
 
 ### Customize responses (i.e. handle custom JSON responses)
 

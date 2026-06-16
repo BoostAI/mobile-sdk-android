@@ -141,6 +141,12 @@ object ChatBackend {
 
     var isBlocked = false
     var allowDeleteConversation = false
+
+    /// When true (default), the SDK automatically calls resetConversationState() from the stop()/delete()
+    /// callbacks. Set to false to keep the local conversation state (messages, conversationId, userToken,
+    /// …) after those commands and manage resets yourself.
+    var allowAutomaticResetConversationState = true
+
     var chatStatus: ChatStatus = ChatStatus.VIRTUAL_AGENT
     var poll = false
     var maxInputChars = 110
@@ -245,20 +251,34 @@ object ChatBackend {
 
     /// STOP command
     ///
-    /// This clears the conversation. You should call this to tell the API that the client is finished with the conversation
+    /// This clears the conversation. You should call this to tell the API that the client is finished with the conversation.
+    ///
+    /// Note: The STOP command is always sent. When it completes (whether it succeeds or fails),
+    /// [resetConversationState] is called if the platform config allows conversation deletion
+    /// (allowDeleteConversation), nulling userToken, conversationId, messages, reference and lastResponse.
+    /// The reset runs after the STOP response has been processed, so a late response cannot repopulate
+    /// the cleared state. Local state is left intact when allowDeleteConversation is false. Because the
+    /// reset happens in the listener callback, re-assign userToken/customPayload inside the listener
+    /// before starting a new conversation.
     ///
     /// - Parameter message: An optional CommandStop if you want to set all the parameters of the stop command
     fun stop(message: CommandStop? = null, listener: APIMessageResponseListener? = null) {
         send(message ?: CommandStop(conversationId, userToken), object : APIMessageResponseListener {
             override fun onFailure(exception: Exception) {
                 Handler(Looper.getMainLooper()).post {
+                    if (allowDeleteConversation && allowAutomaticResetConversationState) {
+                        resetConversationState()
+                    }
+
                     listener?.onFailure(exception)
                 }
             }
 
             override fun onResponse(apiMessage: APIMessage) {
                 Handler(Looper.getMainLooper()).post {
-                    resetConversationState()
+                    if (allowDeleteConversation && allowAutomaticResetConversationState) {
+                        resetConversationState()
+                    }
 
                     listener?.onResponse(apiMessage)
                 }
@@ -290,7 +310,9 @@ object ChatBackend {
 
             override fun onResponse(apiMessage: APIMessage) {
                 Handler(Looper.getMainLooper()).post {
-                    resetConversationState()
+                    if (allowAutomaticResetConversationState) {
+                        resetConversationState()
+                    }
 
                     listener?.onResponse(apiMessage)
                 }
