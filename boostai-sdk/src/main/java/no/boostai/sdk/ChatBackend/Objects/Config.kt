@@ -42,10 +42,31 @@ object HexColorSerializer {
     override fun deserialize(decoder: Decoder): Int {
         // If we don't have the element type provided by JSON, set it to UNKNOWN
         return try {
-            Color.parseColor(decoder.decodeString())
+            Color.parseColor(normalizeColorString(decoder.decodeString()))
         } catch (e: Exception) {
             0
         }
+    }
+
+    /**
+     * Android's [Color.parseColor] only accepts #RRGGBB / #AARRGGBB and named colors. The boost.ai
+     * config API may use CSS shorthand hex (e.g. "#fff"), so expand those to the long form before
+     * parsing. Without this, a value like "#fff" throws and silently becomes color 0 (transparent
+     * black), producing e.g. dark/invisible button text instead of the intended color.
+     */
+    private fun normalizeColorString(raw: String): String {
+        val s = raw.trim()
+        if (s.startsWith("#")) {
+            val hex = s.substring(1)
+            return when (hex.length) {
+                // #RGB -> #RRGGBB
+                3 -> "#" + hex.map { "$it$it" }.joinToString("")
+                // #RGBA -> #AARRGGBB (CSS shorthand puts alpha last; Android expects it first)
+                4 -> "#${hex[3]}${hex[3]}${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}"
+                else -> s
+            }
+        }
+        return s
     }
     override fun serialize(encoder: Encoder, value: Int) {
         encoder.encodeString(java.lang.String.format("#%06X", 0xFFFFFF and value))
