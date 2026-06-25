@@ -600,7 +600,12 @@ object ChatBackend {
             }
 
             override fun onResponse(apiMessage: APIMessage) {
-                if (apiMessage.postedId != null && apiMessage.postedId > 0) {
+                // In human chat mode we must not advance the poll cursor to the user's own
+                // postedId. A human agent message that arrived just before (with a lower id) but
+                // hasn't been polled yet would otherwise be skipped, since the next poll only
+                // returns ids larger than pollValue. Let the poll itself advance the cursor via
+                // handleApiMessage() instead.
+                if (!poll && apiMessage.postedId != null && apiMessage.postedId > 0) {
                     apiMessage.postedId.toString().also { pollValue = it }
                 }
 
@@ -722,7 +727,11 @@ object ChatBackend {
         this.isBlocked = state.isBlocked ?: false
         this.maxInputChars = state.maxInputChars ?: this.maxInputChars
         this.lastResponse = apiMessage
-        this.pollValue = apiMessage.response?.id ?: (if (apiMessage.responses?.size ?: 0 > 0) apiMessage.responses?.last()?.id else null) ?: pollValue
+        val pollCandidate = apiMessage.response?.id
+            ?: (if ((apiMessage.responses?.size ?: 0) > 0) apiMessage.responses?.last()?.id else null)
+        if (pollCandidate != null) {
+            this.pollValue = advancedPollValue(this.pollValue, pollCandidate)
+        }
         this.allowHumanChatFileUpload = conversation.state.allowHumanChatFileUpload ?: this.allowHumanChatFileUpload
         this.privacyPolicyUrl = conversation.state.privacyPolicyUrl ?: this.privacyPolicyUrl
 
@@ -835,6 +844,22 @@ object ChatBackend {
                 }
             }
         }
+    }
+
+    /// Advance the poll cursor, only moving it forward when the ids are numerically comparable.
+    ///
+    /// Poll ids are normally numeric strings, in which case we keep the larger value so a delayed or
+    /// out-of-order response can't move the cursor backward (which would re-deliver or skip messages).
+    /// When the ids can't be parsed as numbers we can't compare them, so we fall back to the candidate.
+    /// Mirrors the iOS SDK's advancedPollValue.
+    fun advancedPollValue(current: String?, candidate: String): String {
+        if (current == null) return candidate
+        val currentNumber = current.toLongOrNull()
+        val candidateNumber = candidate.toLongOrNull()
+        if (currentNumber != null && candidateNumber != null) {
+            return if (candidateNumber > currentNumber) candidate else current
+        }
+        return candidate
     }
 
     fun startPolling() {
