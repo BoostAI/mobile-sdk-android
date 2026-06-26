@@ -535,6 +535,7 @@ class CommandDownload : IConversation {
     override val command = Command.DOWNLOAD
 }
 
+@Serializable
 class CommandLoginEvent : IConversation {
     constructor(conversationId: String? = null,
                 userToken: String? = null,
@@ -542,7 +543,7 @@ class CommandLoginEvent : IConversation {
     ) {
         this.conversationId = conversationId
         this.userToken = userToken
-        this.skill
+        this.skill = skill
     }
 
     @Required
