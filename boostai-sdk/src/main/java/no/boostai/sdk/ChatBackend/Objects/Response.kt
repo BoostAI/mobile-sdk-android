@@ -42,7 +42,7 @@ import java.util.*
 /// - virtual_agent: Chat is in virtual agent mode
 /// - in_human_chat_queue: Chat is in human chat queue
 /// - assigned_to_human: Chat is assigned to human
-@Serializable
+@Serializable(with = ChatStatusSerializer::class)
 enum class ChatStatus {
     /// virtual_agent Chat is in virtual agent mode
     @SerialName("virtual_agent")
@@ -54,11 +54,34 @@ enum class ChatStatus {
 
     /// assigned_to_human
     @SerialName("assigned_to_human")
-    ASSIGNED_TO_HUMAN
+    ASSIGNED_TO_HUMAN,
+
+    /// A status this SDK version doesn't know. Kept distinct from VIRTUAL_AGENT so the polling
+    /// decision can trust the response's own `poll` flag instead of assuming no human is involved.
+    UNKNOWN
+}
+
+// A server value these enums don't know yet must not make the whole response undecodable — one
+// new enum value would otherwise turn every subsequent message into onFailure and kill the
+// conversation. Same pattern as ElementTypeSerializer below: unknown values map to a safe default.
+@Serializer(forClass = ChatStatus::class)
+object ChatStatusSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ChatStatus", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): ChatStatus = try {
+        ChatStatus.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        // UNKNOWN, not VIRTUAL_AGENT: a new server-side status is likelier to appear on the
+        // human-chat side, and mapping it to "no human involved" would silently stop polling
+        ChatStatus.UNKNOWN
+    }
+    override fun serialize(encoder: Encoder, value: ChatStatus) {
+        encoder.encodeString(value.name.lowercase())
+    }
 }
 
 /// Possible values of response.source
-@Serializable
+@Serializable(with = SourceTypeSerializer::class)
 enum class SourceType {
     @SerialName("bot")
     BOT,
@@ -66,12 +89,40 @@ enum class SourceType {
     CLIENT
 }
 
-@Serializable
+@Serializer(forClass = SourceType::class)
+object SourceTypeSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("SourceType", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): SourceType = try {
+        SourceType.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        SourceType.BOT
+    }
+    override fun serialize(encoder: Encoder, value: SourceType) {
+        encoder.encodeString(value.name.lowercase())
+    }
+}
+
+@Serializable(with = LinkTypeSerializer::class)
 enum class LinkType {
     @SerialName("action_link")
     ACTION_LINK,
     @SerialName("external_link")
     EXTERNAL_LINK
+}
+
+@Serializer(forClass = LinkType::class)
+object LinkTypeSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("LinkType", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): LinkType = try {
+        LinkType.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        LinkType.ACTION_LINK
+    }
+    override fun serialize(encoder: Encoder, value: LinkType) {
+        encoder.encodeString(value.name.lowercase())
+    }
 }
 
 /// Types an element result can have
@@ -118,11 +169,29 @@ object ElementTypeSerializer {
     }
 }
 
-@Serializable
+@Serializable(with = FunctionTypeSerializer::class)
 enum class FunctionType {
     APPROVE,
-    DENY
+    DENY,
 
+    /// A function this SDK version doesn't know; treated as a plain link
+    UNKNOWN
+}
+
+@Serializer(forClass = FunctionType::class)
+object FunctionTypeSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("FunctionType", PrimitiveKind.STRING)
+    // Case-insensitive: the enum has no @SerialName, so only the exact strings "APPROVE"/"DENY"
+    // used to match — a lowercase wire value made the whole message undecodable
+    override fun deserialize(decoder: Decoder): FunctionType = try {
+        FunctionType.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        FunctionType.UNKNOWN
+    }
+    override fun serialize(encoder: Encoder, value: FunctionType) {
+        encoder.encodeString(value.name)
+    }
 }
 
 /**
@@ -193,7 +262,13 @@ Generic JSON card
  */
 @Serializable
 @Parcelize
-class GenericCard : Parcelable {
+data class GenericCard (
+    val body: TextContent? = null,
+    val heading: TextContent? = null,
+    val image: Image? = null,
+    val link: Link? = null,
+    val template: String? = null
+) : Parcelable {
 
     @Serializable
     @Parcelize
@@ -215,12 +290,6 @@ class GenericCard : Parcelable {
         val text: String?,
         val url: String
     ) : Parcelable
-
-    val body: TextContent? = null
-    val heading: TextContent? = null
-    val image: Image? = null
-    val link: Link? = null
-    val template: String? = null
 }
 
 /**
@@ -233,16 +302,20 @@ object ButtonActionIdSerializer : kotlinx.serialization.KSerializer<String?> {
     override fun deserialize(decoder: Decoder): String? {
         val jsonDecoder = decoder as? kotlinx.serialization.json.JsonDecoder ?: return null
         return when (val element = jsonDecoder.decodeJsonElement()) {
+            // JsonNull IS a JsonPrimitive, and its content is the string "null" — matched first
+            // so an explicit `"buttonActionId": null` doesn't turn into a phantom action id
+            is kotlinx.serialization.json.JsonNull -> null
             is kotlinx.serialization.json.JsonPrimitive -> element.content
             is kotlinx.serialization.json.JsonObject -> element["id"]?.let {
-                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+                (it as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { p -> p !is kotlinx.serialization.json.JsonNull }?.content
             }
             else -> null
         }
     }
 
     override fun serialize(encoder: Encoder, value: String?) {
-        if (value != null) encoder.encodeString(value)
+        if (value != null) encoder.encodeString(value) else encoder.encodeNull()
     }
 }
 
@@ -397,34 +470,42 @@ data class APIResponseError(val error: String)
 
 @Serializable
 open class SDKException : Exception {
+    // The overriding property shadows Throwable's message, so each constructor has to assign it
+    // too — with only the super() call, SDKException("reason").message was always "" and the
+    // reason was lost.
     @SerialName("error")
     override var message: String = ""
 
     constructor() : super()
-    constructor(message: String) : super(message)
-    constructor(message: String, cause: Throwable) : super(message, cause)
-    constructor(cause: Throwable) : super(cause)
+    constructor(message: String) : super(message) {
+        this.message = message
+    }
+    constructor(message: String, cause: Throwable?) : super(message, cause) {
+        this.message = message
+    }
+    constructor(cause: Throwable) : super(cause) {
+        this.message = cause.toString()
+    }
 }
 
-open class SDKSerializationException : SDKException {
-    override var message: String = ""
-
-    val body: String
-        get() {
-            return message
-        }
-
-    constructor() : super()
-    constructor(message: String) : super(message)
-    constructor(message: String, cause: Throwable) : super(message, cause)
-    constructor(cause: Throwable) : super(cause)
-}
+/**
+ * A response the SDK could not make sense of — an HTTP error without a usable `error` field, or
+ * a body that failed to decode. [body] carries the raw response for diagnostics; [message] is a
+ * short description, never the body itself, since hosts routinely show `localizedMessage` to the
+ * user.
+ */
+open class SDKSerializationException(
+    val body: String = "",
+    cause: Throwable? = null
+) : SDKException("Unexpected response from the server", cause)
 
 object JsonElementParceler : Parceler<JsonElement?> {
+    // Null-safe in both directions: `toString()` on a null receiver used to write the string
+    // "null", which read back as JsonNull — a parcel round-trip flipped `x != null` from false
+    // to true.
     override fun create(parcel: Parcel) =
-        Json.parseToJsonElement(parcel.readString().toString())
+        parcel.readString()?.let { Json.parseToJsonElement(it) }
 
     override fun JsonElement?.write(parcel: Parcel, flags: Int) =
-        parcel.writeString(toString())
-
+        parcel.writeString(this?.toString())
 }

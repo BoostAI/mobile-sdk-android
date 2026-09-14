@@ -19,124 +19,53 @@
 
 package no.boostai.sdk.UI
 
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.view.LayoutInflater
 import android.view.View
-import android.view.animation.AnimationUtils
-import android.widget.Button
-import androidx.core.content.ContextCompat
+import android.view.ViewGroup
 import androidx.fragment.app.Fragment
-import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
-import no.boostai.sdk.ChatBackend.Objects.ChatPanelDefaults
-import no.boostai.sdk.ChatBackend.Objects.Response.FunctionType
 import no.boostai.sdk.ChatBackend.Objects.Response.Link
-import no.boostai.sdk.R
-import no.boostai.sdk.UI.Events.BoostUIEvents
-import no.boostai.sdk.UI.Helpers.TimingHelper
-import java.util.*
 
+/**
+ * Deprecated. Hosts a [ChatMessageConsentView], which does the work.
+ *
+ * Messages are rendered as views; see [ChatViewFragmentDelegate.getChatMessagePartView].
+ */
 open class ChatMessageConsentFragment(
     var links: ArrayList<Link>? = null,
     val animated: Boolean = true,
     val customConfig: ChatConfig? = null,
-) : Fragment(R.layout.chat_server_message_consent) {
-
-    lateinit var approveButton: Button
-    lateinit var denyButton: Button
+) : Fragment() {
 
     val linksKey = "links"
+
+    lateinit var consentView: ChatMessageConsentView
+    val approveButton: android.widget.Button
+        get() = consentView.approveButton
+    val denyButton: android.widget.Button
+        get() = consentView.denyButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            links = it.getParcelableArrayList(linksKey)
+            links = it.getParcelableArrayList(linksKey) ?: links
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putParcelableArrayList(linksKey, links)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        consentView = ChatMessageConsentView(
+            requireContext(),
+            links ?: arrayListOf(),
+            animated,
+            customConfig
+        )
+        return consentView
     }
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-
-        approveButton = view.findViewById(R.id.approve_button)
-        denyButton = view.findViewById(R.id.deny_button)
-
-        if (animated) {
-            val pace = customConfig?.chatPanel?.styling?.pace
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.pace
-                ?: ChatBackend.config?.chatPanel?.styling?.pace
-                ?: ChatPanelDefaults.Styling.pace
-            val staggerDelay = TimingHelper.calculateStaggerDelay(pace = pace, idx = 0)
-
-            val fadeInAnimation =
-                AnimationUtils.loadAnimation(context, R.anim.chat_message_animate_in)
-            Handler(Looper.getMainLooper()).postDelayed({
-                if (context != null) {
-                    view.alpha = 1.0F
-                    view.animation = fadeInAnimation
-                }
-            }, staggerDelay)
-        } else view.alpha = 1.0F
-        approveButton.setTextColor(
-            ContextCompat.getColor(requireContext(), R.color.consentApproveButtonTextColor)
-        )
-        (approveButton.background as? GradientDrawable)?.setColor(
-            ContextCompat.getColor(requireContext(), R.color.consentApproveButtonBackgroundColor)
-        )
-        denyButton.setTextColor(
-            ContextCompat.getColor(requireContext(), R.color.consentDenyButtonTextColor)
-        )
-        (denyButton.background as? GradientDrawable)?.setColor(
-            ContextCompat.getColor(requireContext(), R.color.consentDenyButtonBackgroundColor)
-        )
-        links?.let { links ->
-            links.find { it.function == FunctionType.APPROVE }?.let { link ->
-                approveButton.text = link.text
-                approveButton.setOnClickListener {
-                    ChatBackend.actionButton(link.id)
-                    BoostUIEvents.notifyObservers(BoostUIEvents.Event.actionLinkClicked, link.id)
-                    approveButton.setTextColor(
-                        ContextCompat.getColor(
-                            requireContext(),
-                            R.color.consentApproveButtonTextColor
-                        )
-                    )
-                    (approveButton.background as? GradientDrawable)?.alpha = 255
-                    denyButton.setTextColor(
-                        ContextCompat.getColor(
-                            requireContext(), R.color.consentDenyButtonDisabledTextColor
-                        )
-                    )
-                    (denyButton.background as? GradientDrawable)?.alpha = 64
-                }
-            }
-            links.find { it.function == FunctionType.DENY }?.let { link ->
-                denyButton.text = link.text
-                denyButton.setOnClickListener {
-                    ChatBackend.actionButton(link.id)
-                    BoostUIEvents.notifyObservers(BoostUIEvents.Event.actionLinkClicked, link.id)
-                    denyButton.setTextColor(
-                        ContextCompat.getColor(requireContext(), R.color.consentDenyButtonTextColor)
-                    )
-                    (denyButton.background as? GradientDrawable)?.alpha = 255
-                    approveButton.setTextColor(
-                        ContextCompat.getColor(
-                            requireContext(), R.color.consentApproveButtonDisabledTextColor
-                        )
-                    )
-                    (approveButton.background as? GradientDrawable)?.alpha = 64
-                }
-            }
-        }
-    }
-
 }

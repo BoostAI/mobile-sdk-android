@@ -94,7 +94,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
         viewPager = findViewById(R.id.view_pager)
         tabLayout = findViewById(R.id.tab_layout)
 
-        val defaultColor = getColor(R.color.purple)
+        val defaultColor = getColor(no.boostai.sdk.R.color.purple)
         appBarLayout?.background = ColorDrawable(defaultColor)
         tabLayout?.background = ColorDrawable(defaultColor)
         applyStatusBarStyling(defaultColor, getColor(R.color.white))
@@ -104,12 +104,12 @@ class MainActivity : AppCompatActivity(R.layout.activity_main),
 
         adapter.addFragment(
             ChatViewFragment(),
-            getString(R.string.fullscreen)
+            getString(no.boostai.sdk.R.string.fullscreen)
         )
 
         adapter.addFragment(
             FloatingAvatarFragment(),
-            getString(R.string.avatar)
+            getString(no.boostai.sdk.R.string.avatar)
         )
 
         tabLayout?.setupWithViewPager(viewPager)

@@ -13,7 +13,10 @@ import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.File
 import no.boostai.sdk.R
 
-open class FileUploadFragment(var file: File) : Fragment(R.layout.file_upload) {
+// The default parameter matters: without a zero-argument constructor the FragmentManager cannot
+// re-instantiate this fragment on a configuration change, and rotating with an upload chip on
+// screen crashed the app with Fragment.InstantiationException.
+open class FileUploadFragment(var file: File? = null) : Fragment(R.layout.file_upload) {
     private lateinit var fileImageView: ImageView
     private lateinit var textView: TextView
     private lateinit var progressIndicator: ProgressBar
@@ -29,6 +32,13 @@ open class FileUploadFragment(var file: File) : Fragment(R.layout.file_upload) {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // A restored instance carries no file — the pending-upload state lives in
+        // ChatViewFragment, which discards restored upload rows. Show nothing.
+        val file = file ?: run {
+            view.visibility = View.GONE
+            return
+        }
 
         fileImageView = view.findViewById(R.id.file_upload_file_image_view)
         textView = view.findViewById(R.id.file_upload_text_view)

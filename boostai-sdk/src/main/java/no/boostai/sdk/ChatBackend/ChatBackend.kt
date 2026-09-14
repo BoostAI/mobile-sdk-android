@@ -26,9 +26,12 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
 import no.boostai.sdk.ChatBackend.Objects.ClientTyping
 import no.boostai.sdk.ChatBackend.Objects.CommandConfig
@@ -80,10 +83,10 @@ import java.net.URL
 import java.util.Arrays
 import java.util.Date
 import java.util.Timer
-import java.util.TimerTask
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
-import kotlin.concurrent.scheduleAtFixedRate
+import kotlin.concurrent.schedule
 import kotlin.math.min
 
 object ChatBackend {
@@ -113,10 +116,12 @@ object ChatBackend {
     var domain: String = ""
 
     /// The conversation Id. If you store this for later usage, you need to set this instead of calling start()
-    var conversationId: String? = null
+    // @Volatile on these: they are written on the main thread but read when the poll timer
+    // thread builds its CommandPoll, and written on OkHttp threads in getConfig
+    @Volatile var conversationId: String? = null
 
     /// User token. This is used instead of conversation id if set
-    var userToken: String? = null
+    @Volatile var userToken: String? = null
 
     /// Reference. For internal use
     var reference: String = ""
@@ -149,6 +154,22 @@ object ChatBackend {
 
     var chatStatus: ChatStatus = ChatStatus.VIRTUAL_AGENT
     var poll = false
+
+    /**
+     * Whether the conversation is currently with (or queued for) a human agent and being polled
+     * for their messages. The single reading of the status and poll flags that the polling
+     * decision, the attach button and the foreground poll restart all share: for the two known
+     * human statuses the merged, sticky [poll] flag (the server sends it intermittently); for an
+     * unknown status only the last response's own flag, since the sticky one can be residue from
+     * an already-finished human chat; never for the virtual agent.
+     */
+    val isInHumanChat: Boolean
+        get() = when (chatStatus) {
+            ChatStatus.IN_HUMAN_CHAT_QUEUE, ChatStatus.ASSIGNED_TO_HUMAN -> poll
+            ChatStatus.UNKNOWN -> lastResponse?.conversation?.state?.poll == true
+            ChatStatus.VIRTUAL_AGENT -> false
+        }
+
     var maxInputChars = 110
     var privacyPolicyUrl = "https://www.boost.ai/privacy-policy"
     var lastResponse: APIMessage? = null
@@ -156,18 +177,45 @@ object ChatBackend {
     private var lastTyped: Date? = null
 
     var pollInterval: Long = 2500
-    var pollValue: String? = null
-    var pollTimer: TimerTask? = null
+    @Volatile var pollValue: String? = null
+    // Private: the polling lifecycle is managed through start/stop/schedule/cancel — a host
+    // nulling this directly would orphan a live timer thread and bypass the reschedule guard
+    private var pollTimer: Timer? = null
+
+    /**
+     * True after the UI has explicitly stopped polling (chat closed or backgrounded). A response
+     * that was already in flight at that moment must not restart the timer from
+     * [handleApiMessage]; only [startPolling] clears the flag.
+     */
+    private var pollingSuspended = false
 
     var filterValues: List<String>? = null
 
-    private var messageObservers = ArrayList<WeakReference<MessageObserver>>()
-    private var configObservers = ArrayList<WeakReference<ConfigObserver>>()
-    private var eventObservers = ArrayList<WeakReference<EventObserver>>()
+    // CopyOnWriteArrayList so an observer can remove itself (or add another) from inside its own
+    // callback, and so registration from any thread can't corrupt an iteration in progress
+    private val messageObservers = CopyOnWriteArrayList<WeakReference<MessageObserver>>()
+    private val configObservers = CopyOnWriteArrayList<WeakReference<ConfigObserver>>()
+    private val eventObservers = CopyOnWriteArrayList<WeakReference<EventObserver>>()
+
+    /**
+     * Register [observer] in [list] unless it is already there, and sweep out entries whose
+     * referent has been collected — nothing else ever prunes them, and a long-lived process
+     * re-registering per screen otherwise grows the lists without bound.
+     */
+    private fun <T : Any> addObserver(list: CopyOnWriteArrayList<WeakReference<T>>, observer: T) {
+        list.removeAll { it.get() == null || it.get() === observer }
+        list.add(WeakReference(observer))
+    }
+
+    private fun <T : Any> removeObserver(list: CopyOnWriteArrayList<WeakReference<T>>, observer: T) {
+        list.removeAll { it.get() == null || it.get() === observer }
+    }
 
     var messages: ArrayList<APIMessage> = ArrayList()
     var vanId: Int? = null
-    var config: ChatConfig? = null
+
+    // Written on the OkHttp thread in getConfig's responseHandler, read from the main thread
+    @Volatile var config: ChatConfig? = null
 
     // Override default config (that usually comes from boost.ai server)
     var customConfig: ChatConfig? = null
@@ -290,8 +338,13 @@ object ChatBackend {
     /// - Parameter message: An optional CommandResume if you want to set all the parameters of the resume command
     public fun resume(message: CommandResume? = null, listener: APIMessageResponseListener? = null) {
         val m = message ?: CommandResume()
-        m.conversationId = m.conversationId
         m.userToken = m.userToken ?: userToken
+        // The stored conversation id only fills in for unauthenticated resumes — the user token
+        // takes precedence (as in CommandPost), and mid-process the singleton may hold an id
+        // from an earlier, finished conversation
+        if (m.userToken == null) {
+            m.conversationId = m.conversationId ?: conversationId
+        }
         m.customPayload = m.customPayload ?: customPayload
         m.skill = m.skill ?: skill
 
@@ -331,7 +384,9 @@ object ChatBackend {
 
     /// POLLSTOP command
     ///
-    /// Call this if you want to stop a human poll sequence
+    /// Call this if you want to stop a human poll sequence. The poll timer is cancelled when the
+    /// server confirms. Note that the server may confirm with an empty body, in which case the
+    /// listener's onResponse receives an APIMessage whose `conversation` is null.
     ///
     /// - Parameter message: An optional CommandPollStop if you want to set all the parameters of the pollstop command
     fun pollStop(message: CommandPollStop? = null, listener: APIMessageResponseListener? = null) {
@@ -348,17 +403,23 @@ object ChatBackend {
 
     /// This command is mostly internal. Try to use clientTyping(text) instead.
     fun typing(listener: APIMessageResponseListener? = null) {
-        if (chatStatus == ChatStatus.VIRTUAL_AGENT) {
+        // TYPING is a human-chat signal: sent only for the two known human statuses. An UNKNOWN
+        // status must stay suppressed like the virtual agent — unknown statuses used to decode
+        // as VIRTUAL_AGENT and were suppressed, and firing TYPING at whatever the unknown state
+        // is risks conversationless error responses on every keystroke burst.
+        if (chatStatus != ChatStatus.IN_HUMAN_CHAT_QUEUE &&
+            chatStatus != ChatStatus.ASSIGNED_TO_HUMAN
+        ) {
             return
         }
 
-        if (lastTyped != null) {
-            val now = Date()
-            if (Math.abs(now.time - lastTyped!!.time) < 5000) {
-                return
-            }
+        // Read once — this is public API with no thread contract, and a null-check-then-!!
+        // pair could NPE between the two reads
+        val lastTyped = lastTyped
+        if (lastTyped != null && Math.abs(Date().time - lastTyped.time) < 5000) {
+            return
         }
-        lastTyped = Date()
+        this.lastTyped = Date()
 
         val message = CommandTyping(conversationId, userToken)
         send(message, listener)
@@ -480,13 +541,7 @@ object ChatBackend {
         val postMessage = createPostMessage(Type.FILES)
         postMessage.message = message
 
-        // Hack to fix the fact that the upload service returns "mimeType" while the API endpoint
-        // expects "mimetype" (all lowercase)
-        val jsonFiles = files.map {
-            "{\"filename\":\"${it.filename}\", \"mimetype\": \"${it.mimeType}\", \"url\": \"${it.url}\"}"
-        }
-        val jsonString = "[${jsonFiles.joinToString(", ")}]"
-        postMessage.value = Json.parseToJsonElement(jsonString)
+        postMessage.value = filesAsJson(files)
         send(postMessage, listener)
 
         // Store and publish the message sent so it can be rendered in the chatbot UI
@@ -564,10 +619,24 @@ object ChatBackend {
     }
 
     public fun loginEvent(userToken: String, listener: APIMessageResponseListener? = null) {
-        send(CommandLoginEvent(conversationId, userToken), listener)
+        // The skill defaults from the backend here as it does in start() and resume()
+        send(CommandLoginEvent(conversationId, userToken, skill), listener)
     }
 
     fun send(message: ICommand, listener: APIMessageResponseListener? = null, responseHandler: APIMessageResponseHandler? = null) {
+        send(message, listener, responseHandler, startsPolling = true)
+    }
+
+    /**
+     * [startsPolling] is false only for the poll timer's own POLL commands: their replies keep a
+     * running timer going but must not start one — see [timerPoll].
+     */
+    private fun send(
+        message: ICommand,
+        listener: APIMessageResponseListener?,
+        responseHandler: APIMessageResponseHandler?,
+        startsPolling: Boolean
+    ) {
         when (message) {
             is CommandPost -> {
                 if (message.clean == null && this.clean) {
@@ -583,8 +652,9 @@ object ChatBackend {
             else -> {}
         }
 
-        // Set filterValues
-        message.filterValues = filterValues
+        // Default the filter values from the backend, but never clobber values the caller set
+        // on the command itself — filterValues is public, documented API on ICommand
+        message.filterValues = message.filterValues ?: filterValues
 
         // Remove class discriminator key (it makes the server backend throw a 400 error)
         val data = Json { classDiscriminator = "_type" }.encodeToJsonElement(message)
@@ -600,6 +670,33 @@ object ChatBackend {
             }
 
             override fun onResponse(apiMessage: APIMessage) {
+                // A 200 whose body decodes without a conversation (a proxy error page, an empty
+                // {} for POLLSTOP) is an error, not a message: report it once and stop — it must
+                // not be stored, published as a received message, or handed to the listener as a
+                // success.
+                if (apiMessage.conversation == null) {
+                    // POLLSTOP is the one command whose reply is legitimately an empty {}: a
+                    // success with nothing to store or publish, not an error to banner. The
+                    // server has confirmed the stop, so the poll machinery ends here as it would
+                    // have in handleApiMessage had the reply carried a conversation with poll off.
+                    if (message is CommandPollStop) {
+                        cancelPolling()
+                        poll = false
+                        pollValue = null
+                        Handler(Looper.getMainLooper()).post {
+                            listener?.onResponse(apiMessage)
+                        }
+                        return
+                    }
+
+                    val error = SDKException("No conversation in response")
+                    publishResponse(null, error)
+                    Handler(Looper.getMainLooper()).post {
+                        listener?.onFailure(error)
+                    }
+                    return
+                }
+
                 // In human chat mode we must not advance the poll cursor to the user's own
                 // postedId. A human agent message that arrived just before (with a lower id) but
                 // hasn't been polled yet would otherwise be skipped, since the next poll only
@@ -610,7 +707,7 @@ object ChatBackend {
                 }
 
                 messages.add(apiMessage)
-                handleApiMessage(apiMessage)
+                handleApiMessage(apiMessage, startsPolling)
                 publishResponse(apiMessage, null)
 
                 Handler(Looper.getMainLooper()).post {
@@ -657,18 +754,26 @@ object ChatBackend {
                             handleJsonEvent(apiMessage)
                         }
                     } else {
-                        try {
-                            val exception = chatbackendJson.decodeFromString<SDKException>(body)
-                            Handler(Looper.getMainLooper()).post {
-                                listener?.onFailure(exception)
-                            }
+                        val exception = try {
+                            // `error` is an optional property and unknown keys are ignored, so
+                            // any JSON object "decodes" — take the raw-body fallback whenever no
+                            // actual error message came out of it, or a gateway's
+                            // {"detail": ...}-style body would surface as an empty exception
+                            chatbackendJson.decodeFromString<SDKException>(body)
+                                .takeIf { it.message.isNotBlank() }
+                                ?: SDKSerializationException(body)
                         } catch (e: SerializationException) {
-                            Handler(Looper.getMainLooper()).post {
-                                listener?.onFailure(SDKSerializationException(body))
-                            }
+                            SDKSerializationException(body)
+                        }
+                        Handler(Looper.getMainLooper()).post {
+                            listener?.onFailure(exception)
                         }
                     }
-                } catch (e: SerializationException) {
+                } catch (e: Exception) {
+                    // Broader than SerializationException on purpose: reading the body can throw
+                    // IOException, and a responseHandler (e.g. config conversion) can throw
+                    // anything — uncaught, OkHttp rethrows it on its dispatcher thread and the
+                    // process dies instead of the caller seeing onFailure.
                     e.printStackTrace()
                     Handler(Looper.getMainLooper()).post {
                         listener?.onFailure(e)
@@ -684,7 +789,10 @@ object ChatBackend {
 
         val responseListener = listener
 
-        post(body, null, null, object : APIMessageResponseHandler {
+        // The listener is passed to post() too, so network failures and HTTP errors reach
+        // onFailure — with a null listener there they were silently dropped and the caller never
+        // heard back at all.
+        post(body, null, responseListener, object : APIMessageResponseHandler {
             override fun handleResponse(body: String, listener: APIMessageResponseListener?) {
                 val apiMessage = APIMessage()
                 apiMessage.download = body
@@ -694,6 +802,22 @@ object ChatBackend {
                 }
             }
         })
+    }
+
+    /**
+     * The FILES payload for [sendFiles]. Built by hand because the upload service returns
+     * "mimeType" while the API endpoint expects "mimetype" (all lowercase) — but with a real JSON
+     * builder, since filenames come straight from the user's file picker and can contain quotes
+     * and backslashes.
+     */
+    internal fun filesAsJson(files: List<File>): JsonElement = buildJsonArray {
+        files.forEach { file ->
+            addJsonObject {
+                put("filename", file.filename)
+                put("mimetype", file.mimeType)
+                put("url", file.url)
+            }
+        }
     }
 
     // Local message only. Used to display action link clicks as user message bubbles
@@ -716,8 +840,15 @@ object ChatBackend {
         publishResponse(apiMessage, null)
     }
 
-    fun handleApiMessage(apiMessage: APIMessage) {
-        val conversation = apiMessage.conversation ?: throw SDKException("No conversation in response")
+    /**
+     * [startsPolling] is false for the poll timer's own replies, which must never start a timer —
+     * see [timerPoll]. Direct callers leave it at the default.
+     */
+    fun handleApiMessage(apiMessage: APIMessage, startsPolling: Boolean = true) {
+        // Conversationless responses are rejected in send() before they get here; this guard is
+        // defensive for direct callers — it must not publish (send() already has) and it must
+        // not throw (the old throw inside a main-looper runnable killed the host app)
+        val conversation = apiMessage.conversation ?: return
 
         this.conversationId = conversation.id
         this.reference = conversation.reference ?: this.reference
@@ -744,10 +875,21 @@ object ChatBackend {
 
         this.poll = state.poll ?: this.poll
 
-        if (state.poll != null && state.poll && Arrays.asList(ChatStatus.IN_HUMAN_CHAT_QUEUE, ChatStatus.ASSIGNED_TO_HUMAN).indexOf(conversation.state.chatStatus) != -1) {
-            startPolling()
+        // The merged `poll`, not the raw `state.poll`: the merge above exists precisely because
+        // the server may omit the field, and requiring it per-response meant one human-chat
+        // response without it cancelled the timer and wiped the cursor — so agent messages
+        // stopped, and the next resume re-delivered the whole conversation.
+        //
+        // An UNKNOWN status polls only when its own response says so: the merged flag can be
+        // stale residue from an earlier human chat (ended with poll omitted), and trusting it
+        // for a status we can't interpret would poll a finished conversation forever.
+        if (isInHumanChat) {
+            // Not while the UI has suspended polling, and never for the timer's own poll reply: a
+            // poll already in flight when polling was stopped, suspended or the chat closed must
+            // not resurrect the timer it was fired from.
+            if (!pollingSuspended && startsPolling) schedulePolling()
         } else {
-            stopPolling()
+            cancelPolling()
             pollValue = null
         }
 
@@ -771,7 +913,17 @@ object ChatBackend {
     }
 
     fun uploadFilesToAPI(files: List<FileUpload>, fileExpirationSeconds: Int? = null, listener: APIFileUploadResponseListener? = null) {
-        var endpointURL = fileUploadServiceEndpointUrl ?: return
+        // A missing endpoint is a failure, not a silent no-op: returning without invoking the
+        // listener left the upload chip spinning forever — with remove, submit and attach all
+        // disabled, the composer was permanently wedged. Reachable when a picked file comes back
+        // (process death during the picker) before the config re-fetch has populated the URL.
+        var endpointURL = fileUploadServiceEndpointUrl ?: run {
+            deliverUploadFailure(
+                listener,
+                SDKException("No file upload service endpoint URL configured")
+            )
+            return
+        }
 
         fileExpirationSeconds?.let {
             endpointURL += "?expiry=$it"
@@ -796,7 +948,9 @@ object ChatBackend {
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 e.printStackTrace();
-                publishResponse(null, e)
+                // The caller's listener drives the upload UI (error chips, status messages) —
+                // failures used to go only to the message observers, so the chip never appeared
+                deliverUploadFailure(listener, e)
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -809,16 +963,33 @@ object ChatBackend {
                             listener?.onResponse(fileJson.files)
                         }
                     } else {
-                        Handler(Looper.getMainLooper()).post {
-                            listener?.onFailure(SDKException("No files found in response"))
-                        }
+                        // Through the same channels as every other upload failure — this path
+                        // used to reach only the listener, so message observers never heard of
+                        // an HTTP error, and labelled it "No files found in response"
+                        val error = try {
+                            chatbackendJson.decodeFromString<SDKException>(body)
+                                .takeIf { it.message.isNotBlank() }
+                        } catch (e: Exception) {
+                            null
+                        } ?: SDKException("File upload failed (HTTP ${response.code})")
+                        deliverUploadFailure(listener, error)
                     }
-                } catch (e: SerializationException) {
+                } catch (e: Exception) {
+                    // Broader than SerializationException: reading the body can throw IOException,
+                    // which would otherwise escape and kill the OkHttp dispatcher thread
                     e.printStackTrace()
-                    publishResponse(null, e)
+                    deliverUploadFailure(listener, e)
                 }
             }
         })
+    }
+
+    private fun deliverUploadFailure(listener: APIFileUploadResponseListener?, e: Exception) {
+        // Both channels: the listener drives the upload UI (error chips), while message
+        // observers were the only channel that existed before — host apps surfacing upload
+        // errors through onFailure must keep hearing about them
+        Handler(Looper.getMainLooper()).post { listener?.onFailure(e) }
+        publishResponse(null, e)
     }
 
     fun handleJsonEvent(apiMessage: APIMessage) {
@@ -863,14 +1034,82 @@ object ChatBackend {
     }
 
     fun startPolling() {
-        pollTimer?.cancel()
+        pollingSuspended = false
+        schedulePolling()
+    }
 
-        pollTimer = Timer().scheduleAtFixedRate(pollInterval, pollInterval) {
-            poll()
+    /**
+     * Stop the human-chat poll timer.
+     *
+     * Only the timer: the next human-chat response from the server starts polling again, as it
+     * always has — except the reply to a poll the timer itself had already fired, which is
+     * ignored rather than allowed to resurrect the timer. A host that drives [ChatBackend]
+     * without the SDK's chat UI can therefore keep calling this on pause and rely on the
+     * conversation to resume polling by itself. The chat UI uses [suspendPolling] instead, which
+     * also holds off responses to the user's own messages until the chat is visible again.
+     */
+    fun stopPolling() {
+        cancelPolling()
+    }
+
+    /**
+     * Stop the human-chat poll timer and keep it stopped until [allowPolling] or
+     * [startPolling] is called.
+     *
+     * A poll response already in flight when the chat is closed or backgrounded would otherwise
+     * reach [handleApiMessage] and resurrect the timer. The suspension is deliberate state, so
+     * whoever suspends must also lift it — see [allowPolling].
+     */
+    fun suspendPolling() {
+        pollingSuspended = true
+        cancelPolling()
+    }
+
+    /**
+     * Let [handleApiMessage] schedule polling again without starting a timer right now.
+     *
+     * The chat UI calls this whenever it becomes visible. [suspendPolling] runs on every pause —
+     * screen lock, an external link, the file picker — and without this, a suspension picked up
+     * during the virtual-agent phase stayed in force forever (the conditional [startPolling] in
+     * onResume only fires when the conversation is already in human chat), so a later transfer
+     * to a human agent would never begin polling.
+     */
+    fun allowPolling() {
+        pollingSuspended = false
+    }
+
+    private fun schedulePolling() {
+        // Already polling — rescheduling on every poll response would spawn (and abandon) a new
+        // Timer thread every interval for the whole human chat
+        if (pollTimer != null) return
+
+        pollTimer = Timer("BoostChatPoll").also { timer ->
+            // Fixed delay rather than fixed rate: fixed-rate scheduling runs catch-up bursts of
+            // queued POLL commands after the device has been dozing
+            timer.schedule(pollInterval, pollInterval) {
+                // An exception escaping a TimerTask kills the Timer thread, and with pollTimer
+                // still set nothing would ever schedule polling again for this human chat
+                try {
+                    timerPoll()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
-    fun stopPolling() {
+    /**
+     * The timer's own POLL. Its reply keeps a running timer going but never starts one: the reply
+     * to a poll fired just before [stopPolling], [suspendPolling] or a close would otherwise
+     * arrive after the cancel and start the timer over. A [poll] the host sends by hand is an
+     * ordinary command and does start polling on a human-chat reply.
+     */
+    private fun timerPoll() {
+        send(CommandPoll(conversationId, userToken, pollValue ?: ""), null, null, startsPolling = false)
+    }
+
+    private fun cancelPolling() {
+        // Cancelling the Timer (not just its task) also ends the thread it runs on
         pollTimer?.cancel()
         pollTimer = null
     }
@@ -881,6 +1120,17 @@ object ChatBackend {
         reference = ""
         userToken = null
         lastResponse = null
+
+        // The poll machinery must not outlive the conversation. Left running — e.g. after a
+        // stop() that failed offline — the timer kept firing CommandPoll(conversationId = null)
+        // every interval and broadcast an error to every observer per attempt; the stale
+        // chatStatus also kept typing() sending TYPING commands into the next conversation.
+        cancelPolling()
+        pollingSuspended = false
+        poll = false
+        pollValue = null
+        chatStatus = ChatStatus.VIRTUAL_AGENT
+        isBlocked = false
     }
 
     fun publishResponse(message: APIMessage?, error: Exception?) {
@@ -922,56 +1172,19 @@ object ChatBackend {
             customPayload = customPayload)
     }
 
-    fun addMessageObserver(observer: MessageObserver) {
-        messageObservers.add(WeakReference(observer))
-    }
+    fun addMessageObserver(observer: MessageObserver) = addObserver(messageObservers, observer)
 
-    fun removeMessageObserver(observer: MessageObserver) {
-        var remove: WeakReference<MessageObserver>? = null
-        messageObservers.forEach {
-            if (it.get() == observer) {
-                remove = it
-            }
-        }
+    fun removeMessageObserver(observer: MessageObserver) =
+        removeObserver(messageObservers, observer)
 
-        if (remove != null) {
-            messageObservers.remove(remove)
-        }
-    }
+    fun addConfigObserver(observer: ConfigObserver) = addObserver(configObservers, observer)
 
-    fun addConfigObserver(observer: ConfigObserver) {
-        configObservers.add(WeakReference(observer))
-    }
+    fun removeConfigObserver(observer: ConfigObserver) = removeObserver(configObservers, observer)
 
-    fun removeConfigObserver(observer: ConfigObserver) {
-        var remove: WeakReference<ConfigObserver>? = null
-        configObservers.forEach {
-            if (it.get() == observer) {
-                remove = it
-            }
-        }
-
-        if (remove != null) {
-            configObservers.remove(remove)
-        }
-    }
-
-    fun addEventObserver(observer: EventObserver) {
-        eventObservers.add(WeakReference(observer))
-    }
+    fun addEventObserver(observer: EventObserver) = addObserver(eventObservers, observer)
 
     fun removeEventObserver(observer: EventObserver) {
-        var remove: WeakReference<EventObserver>? = null
-
-        eventObservers.forEach {
-            if (it.get() == observer) {
-                remove = it
-            }
-        }
-
-        if (remove != null) {
-            eventObservers.remove(remove)
-        }
+        removeObserver(eventObservers, observer)
     }
 
     interface ConfigReadyListener {

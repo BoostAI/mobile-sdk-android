@@ -1,25 +1,22 @@
 package no.boostai.sdk.UI.Events
 
 import java.lang.ref.WeakReference
+import java.util.concurrent.CopyOnWriteArrayList
 
 object BoostUIEvents {
-    private var observers = ArrayList<WeakReference<Observer>>()
+    // CopyOnWriteArrayList so a host observer reacting to an event (say, chatPanelClosed) can
+    // remove itself from inside the callback without a ConcurrentModificationException
+    private val observers = CopyOnWriteArrayList<WeakReference<Observer>>()
 
     fun addObserver(observer: Observer) {
+        // Deduped and swept: the chat re-registers its observer on every start() (retry
+        // included), and collected references were never pruned
+        observers.removeAll { it.get() == null || it.get() === observer }
         observers.add(WeakReference(observer))
     }
 
     fun removeObserver(observer: Observer) {
-        var remove: WeakReference<Observer>? = null
-        observers.forEach {
-            if (it.get() == observer) {
-                remove = it
-            }
-        }
-
-        if (remove != null) {
-            observers.remove(remove)
-        }
+        observers.removeAll { it.get() == null || it.get() === observer }
     }
 
     fun notifyObservers(event: Event, detail: Any? = null) {

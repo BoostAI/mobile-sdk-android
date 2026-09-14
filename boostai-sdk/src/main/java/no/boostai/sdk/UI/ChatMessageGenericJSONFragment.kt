@@ -1,114 +1,90 @@
-
+//  boost.ai Android SDK
+//  Copyright © 2021 boost.ai
+//
+//  This program is free software: you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation, either version 3 of the License, or
+//  (at your option) any later version.
+//
+//  This program is distributed in the hope that it will be useful,
+//  but WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//  GNU General Public License for more details.
+//
+//  You should have received a copy of the GNU General Public License
+//  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+//  Please contact us at contact@boost.ai if you have any questions.
+//
 
 package no.boostai.sdk.UI
 
-import android.content.Intent
-import android.graphics.Typeface
-import android.net.Uri
 import android.os.Bundle
-import android.text.SpannableString
-import android.text.style.UnderlineSpan
+import android.view.LayoutInflater
 import android.view.View
-import android.view.animation.AnimationUtils
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.annotation.FontRes
-import androidx.core.content.res.ResourcesCompat
 import androidx.fragment.app.Fragment
-import com.bumptech.glide.Glide
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
 import no.boostai.sdk.ChatBackend.Objects.Response.GenericCard
-import no.boostai.sdk.R
-import no.boostai.sdk.UI.Events.BoostUIEvents
 
+/**
+ * Deprecated. Hosts a [ChatMessageGenericJSONView], which does the work.
+ *
+ * Messages are rendered as views; see [ChatViewFragmentDelegate.getChatMessagePartView].
+ */
 open class ChatMessageGenericJSONFragment(
     var card: GenericCard? = null,
     val animated: Boolean = true,
     var customConfig: ChatConfig? = null
-) :
-    Fragment(R.layout.chat_server_message_generic_json_fragment) {
-
-    lateinit var imageView: ImageView
-    lateinit var headingTextView: TextView
-    lateinit var textTextView: TextView
-    lateinit var linkTextView: TextView
+) : Fragment(), ChatBackend.ConfigObserver {
 
     val cardKey = "card"
+
+    lateinit var cardView: ChatMessageGenericJSONView
+    val imageView: ImageView get() = cardView.imageView
+    val headingTextView: TextView get() = cardView.headingTextView
+    val textTextView: TextView get() = cardView.textTextView
+    val linkTextView: TextView get() = cardView.linkTextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            card = it.getParcelable(cardKey)
+            card = it.getParcelable(cardKey) ?: card
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putParcelable(cardKey, card)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        cardView = ChatMessageGenericJSONView(requireContext(), card, animated, customConfig)
+        return cardView
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        imageView = view.findViewById(R.id.generic_json_imageview)
-        headingTextView = view.findViewById(R.id.generic_json_heading_textview)
-        textTextView = view.findViewById(R.id.generic_json_text_textview)
-        linkTextView = view.findViewById(R.id.generic_json_link_textview)
+        ChatBackend.addConfigObserver(this)
+        updateStyling()
+    }
 
-        if (animated)
-            view.animation = AnimationUtils.loadAnimation(context, R.anim.chat_message_animate_in)
-        headingTextView.text = card?.heading?.text
-        headingTextView.setTypeface(null, Typeface.BOLD)
-        textTextView.text = card?.body?.text
-        card?.image?.url?.let { Glide.with(this).load(it).into(imageView) }
-        card?.link?.text?.let {
-            val content = SpannableString(it)
+    override fun onDestroyView() {
+        super.onDestroyView()
 
-            content.setSpan(UnderlineSpan(), 0, content.length, 0)
-            linkTextView.setText(content)
-        }
-        card?.link?.url.let { url ->
-            linkTextView.setOnClickListener {
-                Intent(Intent.ACTION_VIEW).let {
-                    it.data = Uri.parse(url)
-                    startActivity(it)
-                }
-
-                BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
-            }
-        }
-        imageView.visibility = if (card?.image?.url.isNullOrEmpty()) View.GONE else View.VISIBLE
-        headingTextView.visibility =
-            if (headingTextView.text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        textTextView.visibility = if (textTextView.text.isNullOrEmpty()) View.GONE else View.VISIBLE
-        linkTextView.visibility = if (linkTextView.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+        ChatBackend.removeConfigObserver(this)
     }
 
     fun updateStyling() {
-        @FontRes val bodyFont = customConfig?.chatPanel?.styling?.fonts?.bodyFont
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.fonts?.bodyFont
-            ?: ChatBackend.config?.chatPanel?.styling?.fonts?.bodyFont
-        @FontRes val headlineFont = customConfig?.chatPanel?.styling?.fonts?.headlineFont
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.fonts?.headlineFont
-            ?: ChatBackend.config?.chatPanel?.styling?.fonts?.headlineFont
-
-        bodyFont?.let {
-            try {
-                val typeface = ResourcesCompat.getFont(requireContext().applicationContext, it)
-                textTextView.typeface = typeface
-                linkTextView.typeface = typeface
-            } catch (e: java.lang.Exception) {}
-        }
-
-        headlineFont?.let {
-            try {
-                val typeface = ResourcesCompat.getFont(requireContext().applicationContext, it)
-                headingTextView.typeface = typeface
-            } catch (e: java.lang.Exception) {}
-        }
+        if (::cardView.isInitialized) cardView.applyStyling()
     }
+
+    override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) = updateStyling()
+
+    override fun onFailure(backend: ChatBackend, error: Exception) {}
 }

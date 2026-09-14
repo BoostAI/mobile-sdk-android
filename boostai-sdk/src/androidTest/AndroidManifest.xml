@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name="no.boostai.sdk.SavedStateTestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+        <!-- ChatViewActivity needs no theme override here: it falls back to an AppCompat theme
+             itself in onCreate when the host's theme lacks the AppCompat attributes — which is
+             exactly what the rotation test exercises, so none must be added. -->
+    </application>
+
+</manifest>

@@ -65,33 +65,33 @@ open class ChatMessageFragment(
 
     lateinit var avatarImageView: ImageView
 
+    /**
+     * Host-supplied part fragments, one slot per element (`null` where the host supplied none),
+     * gathered by ChatViewFragment when it probed the delegate to pick the fragment rendering
+     * path. Consumed by the first view creation; later ones ask the delegate afresh.
+     */
+    var preparedPartFragments: List<IChatMessagePartFragment?>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            response = it.getParcelable(responseKey)
-            isBlocked = it.getBoolean(isBlockedKey)
-            isClient = it.getBoolean(isClientKey)
-            isWelcomeMessage = it.getBoolean(isWelcomeMessageKey)
-            isWaitingForServerResponse = it.getBoolean(isWaitingForServerResponseKey)
-            avatarUrl = it.getString(avatarUrlKey)
-            customConfig = it.getParcelable(customConfigKey)
+            response = it.getParcelable(responseKey) ?: response
+            isBlocked = it.getBoolean(isBlockedKey, isBlocked)
+            isClient = it.getBoolean(isClientKey, isClient)
+            isWelcomeMessage = it.getBoolean(isWelcomeMessageKey, isWelcomeMessage)
+            isWaitingForServerResponse =
+                it.getBoolean(isWaitingForServerResponseKey, isWaitingForServerResponse)
+            avatarUrl = it.getString(avatarUrlKey) ?: avatarUrl
+            customConfig = it.getParcelable(customConfigKey) ?: customConfig
             //delegate = it.getParcelable(delegateKey)
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putParcelable(responseKey, response)
-        outState.putBoolean(isBlockedKey, isBlocked)
-        outState.putBoolean(isClientKey, isClient)
-        outState.putBoolean(isWelcomeMessageKey, isWelcomeMessage)
-        outState.putBoolean(isWaitingForServerResponseKey, isWaitingForServerResponse)
-        outState.putString(avatarUrlKey, avatarUrl)
-        outState.putParcelable(customConfigKey, customConfig)
-    }
+    // Intentionally no `onSaveInstanceState` override: message fragments are rebuilt from
+    // `ChatBackend.messages` by ChatViewFragment, so persisting the response and a copy of the
+    // config here only bloated the activity's state parcel (see ChatViewFragment.onCreate).
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -121,20 +121,27 @@ open class ChatMessageFragment(
         }
 
         if (savedInstanceState == null) {
-            val fragments = response?.elements?.map { element ->
-                var messagePartFragment = delegate?.getChatMessagePartFragment(
-                    element,
-                    response?.id,
-                    response?.source == SourceType.CLIENT,
-                    animated
-                )
+            val fragments = response?.elements?.mapIndexed { index, element ->
+                // Part fragments the host already supplied when ChatViewFragment chose this
+                // rendering path are used as-is — asking the delegate again created a second,
+                // discarded fragment per element
+                val prepared = preparedPartFragments
+                var messagePartFragment =
+                    if (prepared != null) prepared.getOrNull(index)
+                    else delegate?.getChatMessagePartFragment(
+                        element,
+                        response?.id,
+                        response?.source == SourceType.CLIENT,
+                        animated
+                    )
 
                 if (messagePartFragment == null || !messagePartFragment.canRender(element)) {
                     messagePartFragment = getMessagePartFragment(element)
                 }
 
-                return@map if (messagePartFragment.canRender(element)) messagePartFragment else null
+                return@mapIndexed if (messagePartFragment.canRender(element)) messagePartFragment else null
             }?.filterNotNull()
+            preparedPartFragments = null
 
             fragments?.forEachIndexed { index, fragment ->
                 val pace = customConfig?.chatPanel?.styling?.pace
@@ -168,8 +175,18 @@ open class ChatMessageFragment(
                 else {
                     addMessagePart(fragment, index)
 
-                    if (!isClient && !isBlocked && !isWelcomeMessage && !hideMessageFeedback && fragment is ChatMessagePartFragment)
-                        fragment.showFeedbackButtons()
+                    // Last part only, matching the animated branch — one thumbs row per message
+                    if (!isClient && !isBlocked && !isWelcomeMessage && !hideMessageFeedback &&
+                        index == fragments.size - 1 && fragment is ChatMessagePartFragment
+                    )
+                        // Posted rather than called straight away: `addMessagePart` commits the
+                        // transaction asynchronously, so the part fragment has no view yet and
+                        // `showFeedbackButtons` would quietly do nothing. The animated branch above
+                        // is already delayed past that point, which is why only unanimated messages
+                        // were missing their thumbs.
+                        Handler(Looper.getMainLooper()).post {
+                            if (context != null) fragment.showFeedbackButtons()
+                        }
                 }
             }
             if (isAwaitingFiles) {
@@ -293,7 +310,6 @@ open class ChatMessageFragment(
     }
 
     override fun onFailure(backend: ChatBackend, error: Exception) {
-        TODO("Not yet implemented")
     }
 
     override fun didTapActionButton(fragment: ChatMessageButtonFragment) {

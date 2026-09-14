@@ -19,165 +19,67 @@
 
 package no.boostai.sdk.UI
 
-import android.annotation.SuppressLint
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
-import android.view.animation.AnimationUtils
-import android.webkit.WebChromeClient
+import android.view.ViewGroup
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.fragment.app.Fragment
-import no.boostai.sdk.R
 
+/**
+ * Deprecated. Hosts a [ChatMessageVideoView], which does the work.
+ *
+ * Messages are rendered as views; see [ChatViewFragmentDelegate.getChatMessagePartView].
+ */
 open class ChatMessageVideoFragment(var source: String? = null, var url: String? = null) :
-    Fragment(R.layout.chat_server_message_video) {
-
-    var contentWebView: WebView? = null
+    Fragment() {
 
     val sourceKey = "source"
     val urlKey = "url"
+
+    lateinit var videoView: ChatMessageVideoView
+    var contentWebView: WebView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            source = it.getString(sourceKey)
-            url = it.getString(urlKey)
+            source = it.getString(sourceKey) ?: source
+            url = it.getString(urlKey) ?: url
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putString(sourceKey, source)
-        outState.putString(urlKey, url)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        videoView = ChatMessageVideoView(requireContext(), source, url)
+        contentWebView = videoView.webView
+        return videoView
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
+    // Kept as forwarders because they are public API; the implementations live in
+    // [ChatMessageRenderers] so both rendering paths share them.
 
-        contentWebView = view.findViewById(R.id.chat_server_message_webview)
+    fun youTubeVideo(url: String): String? =
+        ChatMessageRenderers.videoEmbedUrl("youtube", url)
+            ?.let { ChatMessageRenderers.videoEmbedHTML(it) }
 
-        var videoEmbedHTML: String? = null
+    fun vimeoVideo(url: String): String? =
+        ChatMessageRenderers.videoEmbedUrl("vimeo", url)
+            ?.let { ChatMessageRenderers.videoEmbedHTML(it) }
 
-        contentWebView?.webChromeClient = WebChromeClient()
-        contentWebView?.webViewClient = WebViewClient()
-        contentWebView?.settings?.javaScriptEnabled = true
-        view.animation = AnimationUtils.loadAnimation(context, R.anim.chat_message_animate_in)
-        url?.let { url ->
-            when (source) {
-                "youtube" -> videoEmbedHTML = youTubeVideo(url)
-                "vimeo" -> videoEmbedHTML = vimeoVideo(url)
-                "wistia" -> videoEmbedHTML = wistiaVideo(url)
-            }
-            videoEmbedHTML?.let {
-                contentWebView?.loadData(it, "text/html; charset=UTF-8", null)
-                contentWebView?.visibility = View.VISIBLE
-            }
-        }
-    }
+    fun wistiaVideo(url: String): String? =
+        ChatMessageRenderers.videoEmbedUrl("wistia", url)
+            ?.let { ChatMessageRenderers.videoEmbedHTML(it) }
 
-    /// Message view for a YouTube video
-    /// - Parameter url: A URL for a single YouTube video, i.e. `https://www.youtube.com/watch?v=gcugRVtkBtU`
-    /// - Returns: HTML of a YouTube embedded player
-    fun youTubeVideo(url: String): String? {
-        val id = extractYouTubeID(url) ?: return null
-        val embedURL = "https://www.youtube.com/embed/$id"
+    fun extractYouTubeID(url: String): String? = ChatMessageRenderers.extractYouTubeID(url)
 
-        return videoEmbedHTML(embedURL)
-    }
+    fun extractVimeoID(url: String): String? = ChatMessageRenderers.extractVimeoID(url)
 
-    /// Message view for a Vimeo video
-    /// - Parameter url: A URL for a single Vimeo video, i.e. `https://vimeo.com/316511760`
-    /// - Returns: HTML of a Vimeo embedded player
-    fun vimeoVideo(url: String): String? {
-        val id = extractVimeoID(url) ?: return null
-        val embedURL = "https://player.vimeo.com/video/$id?title=0&byline=0&styling=portrait"
+    fun extractWistiaURL(url: String): String? = ChatMessageRenderers.extractWistiaURL(url)
 
-        return videoEmbedHTML(embedURL)
-    }
-
-    /// Message view for a Wistia video
-    /// - Parameter url: A URL for a single Wistia video, i.e. `https://wistia.com/lbo2kwzc81`
-    /// - Returns: HTML of a Wistia embedded player
-    fun wistiaVideo(url: String): String? {
-        val id = extractWistiaURL(url) ?: return null
-        val embedURL = "https://fast.wistia.net/embed/iframe/$id?seo=false&videoFoam=true"
-
-        return videoEmbedHTML(embedURL)
-    }
-
-    fun extractYouTubeID(url: String): String? {
-        val pattern = Regex("(.*?)(^|/|v=)([a-z0-9_-]{11})(.*)?", RegexOption.IGNORE_CASE)
-        val matches = pattern.findAll(url)
-
-        matches.forEach { matchResult ->
-            if (matchResult.groups.size >= 4) return matchResult.groups[3]?.value
-        }
-
-        return null
-    }
-
-    fun extractVimeoID(url: String): String? {
-        val pattern = Regex(
-            "(http|https)?://(www\\.|player\\.)?vimeo\\.com/(?:channels/(?:\\w+/)?|groups/([^/]*)/videos/|video/|)(\\d+)(?:|/\\?)",
-            RegexOption.IGNORE_CASE
-        )
-        val matches = pattern.findAll(url)
-
-        matches.forEach { matchResult ->
-            if (matchResult.groups.size >= 5) return matchResult.groups[4]?.value
-        }
-
-        return null
-    }
-
-    fun extractWistiaURL(url: String): String? {
-        val pattern = Regex(
-            "(http|https)?:?//(www)?wistia.com/([a-z0-9]+)/?",
-            RegexOption.IGNORE_CASE
-        )
-        val matches = pattern.findAll(url)
-
-        matches.forEach { matchResult ->
-            if (matchResult.groups.size >= 4) { return matchResult.groups[3]?.value }
-        }
-
-        return null
-    }
-
-    fun videoEmbedHTML(url: String): String = """
-        <!doctype html>
-        <html>
-            <head>
-                <style>
-                    html,
-                    body {
-                        overflow: hidden;
-                    }
-                    
-                    body {
-                        margin: 0;
-                        padding: 0;
-                        width: 100vw;
-                        height: 100vh;
-                    }
-        
-                    iframe {
-                        margin: 0;
-                        padding: 0;
-                        width: 100%;
-                        height: 100%;
-                        overflow: hidden;
-                    }
-                </style>
-            </head>
-            <body>
-                <iframe src="$url" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" scrolling="no" playsinline webkitAllowFullScreen mozallowfullscreen allowfullscreen></iframe>
-            </body>
-        </html>
-    """.trimIndent()
-
+    fun videoEmbedHTML(url: String): String = ChatMessageRenderers.videoEmbedHTML(url)
 }

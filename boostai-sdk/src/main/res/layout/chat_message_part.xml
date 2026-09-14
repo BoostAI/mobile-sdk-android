@@ -15,10 +15,18 @@
         android:layout_height="wrap_content"
         android:orientation="vertical" />
 
+    <!--
+        The bubble above carries a 10dp bottom margin, and the message itself another 10dp below.
+        Left alone that centres this row between two messages, so the thumbs read as belonging to
+        the next answer rather than their own. The negative top margin pulls the row back under its
+        own bubble; the bottom margin keeps it clear of what follows.
+    -->
     <LinearLayout
         android:id="@+id/chat_message_feedback_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="-6dp"
+        android:layout_marginBottom="4dp"
         android:orientation="horizontal"
         android:gravity="top"
         android:visibility="gone">

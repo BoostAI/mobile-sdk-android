@@ -20,45 +20,41 @@
 package no.boostai.sdk.UI
 
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
-import android.view.animation.AnimationUtils
-import android.widget.ImageView
+import android.view.ViewGroup
 import androidx.fragment.app.Fragment
-import com.bumptech.glide.Glide
-import no.boostai.sdk.R
 
+/**
+ * Deprecated. Hosts a [ChatMessageImageView], which does the work.
+ *
+ * Messages are rendered as views; see [ChatViewFragmentDelegate.getChatMessagePartView].
+ */
 open class ChatMessageImageFragment(var url: String? = null, val animated: Boolean = true) :
-    Fragment(R.layout.chat_server_message_image) {
+    Fragment() {
 
     val urlKey = "url"
+
+    lateinit var imageView: ChatMessageImageView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            url = it.getString(urlKey)
+            url = it.getString(urlKey) ?: url
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putString(urlKey, url)
-    }
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-
-        if (animated)
-            view.animation = AnimationUtils.loadAnimation(context, R.anim.chat_message_animate_in)
-        view.findViewById<ImageView>(R.id.image).let {
-            it.clipToOutline = true
-            if (url != "") Glide.with(this).load(url).into(it)
-        }
-        view.setOnClickListener {
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        imageView = ChatMessageImageView(requireContext(), url, animated)
+        imageView.setOnClickListener {
             // TODO: Expand image
         }
+        return imageView
     }
-
 }

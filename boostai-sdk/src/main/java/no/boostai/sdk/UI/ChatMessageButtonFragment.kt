@@ -21,34 +21,29 @@ package no.boostai.sdk.UI
 
 import android.app.Activity
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.Animation
-import android.view.animation.AnimationUtils
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.annotation.ColorInt
-import androidx.annotation.FontRes
-import androidx.core.content.ContextCompat
-import androidx.core.content.res.ResourcesCompat
 import androidx.fragment.app.Fragment
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
-import no.boostai.sdk.ChatBackend.Objects.ChatPanelDefaults
 import no.boostai.sdk.ChatBackend.Objects.File
 import no.boostai.sdk.ChatBackend.Objects.FileUpload
 import no.boostai.sdk.ChatBackend.Objects.Response.Link
-import no.boostai.sdk.ChatBackend.Objects.Response.LinkType
-import no.boostai.sdk.R
-import no.boostai.sdk.UI.Events.BoostUIEvents
-import no.boostai.sdk.UI.Helpers.TimingHelper
 import java.io.FileOutputStream
 
+/**
+ * Deprecated. Hosts a [ChatMessageButtonView], which does the work.
+ *
+ * Messages are rendered as views; see [ChatViewFragmentDelegate.getChatMessagePartView].
+ */
 open class ChatMessageButtonFragment(
     var link: Link? = null,
     var idx: Int = 0,
@@ -56,196 +51,64 @@ open class ChatMessageButtonFragment(
     var customConfig: ChatConfig? = null,
     var buttonDelegate: ChatMessageButtonDelegate? = null,
     var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
-) : Fragment(R.layout.chat_server_message_button),
+) : Fragment(),
     ChatBackend.ConfigObserver,
     Animation.AnimationListener,
     ChatMessageButtonDelegate {
 
-    private val FILE_PICKER_REQUEST = 847322
-    val ACTION_LINK_UPLOAD = "upload"
-    lateinit var textView: TextView
-    lateinit var imageView: ImageView
-    lateinit var onClickListener: View.OnClickListener
+    companion object {
+        private const val FILE_PICKER_REQUEST = 847321
+    }
+
+    val ACTION_LINK_UPLOAD = ChatMessageRenderers.ACTION_LINK_UPLOAD
 
     val linkKey = "link"
     val idxKey = "idx"
     val customConfigKey = "customConfig"
+
+    lateinit var buttonView: ChatMessageButtonView
+    val textView: TextView get() = buttonView.textView
+    val imageView: ImageView get() = buttonView.imageView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            link = it.getParcelable(linkKey)
-            idx = it.getInt(idxKey)
-            customConfig = it.getParcelable(customConfigKey)
+            link = it.getParcelable(linkKey) ?: link
+            idx = it.getInt(idxKey, idx)
+            customConfig = it.getParcelable(customConfigKey) ?: customConfig
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putParcelable(linkKey, link)
-        outState.putInt(idxKey, idx)
-        outState.putParcelable(customConfigKey, customConfig)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        buttonView = ChatMessageButtonView(
+            requireContext(),
+            link ?: Link("", "", no.boostai.sdk.ChatBackend.Objects.Response.LinkType.ACTION_LINK),
+            idx,
+            animated,
+            customConfig,
+            chatResponseViewURLHandlingDelegate,
+            onUploadRequested = {
+                Intent(Intent.ACTION_GET_CONTENT).let { intent ->
+                    intent.setType("*/*")
+                    startActivityForResult(intent, FILE_PICKER_REQUEST)
+                }
+            },
+            onActionTapped = { buttonDelegate?.didTapActionButton(this) }
+        )
+        return buttonView
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        textView = view.findViewById(R.id.chat_server_message_button_text)
-        imageView = view.findViewById(R.id.chat_server_message_button_image_view)
-
-        val pace = customConfig?.chatPanel?.styling?.pace
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.pace
-            ?: ChatBackend.config?.chatPanel?.styling?.pace
-            ?: ChatPanelDefaults.Styling.pace
-        val staggerDelay = TimingHelper.calculateStaggerDelay(pace = pace, idx = idx)
-        val fragment = this
-
-        textView.text = link?.text
-        if (animated) {
-            val fadeInAnimation =
-                AnimationUtils.loadAnimation(context, R.anim.chat_message_animate_in)
-            val handler = Handler(Looper.getMainLooper())
-            handler.postDelayed({
-                if (context != null) {
-                    view.alpha = 1.0f
-                    view.animation = fadeInAnimation
-                    fadeInAnimation.setAnimationListener(fragment)
-                }
-            }, staggerDelay)
-
-            handler.postDelayed({
-                if (context != null) {
-                    view.alpha = 1.0f
-                }
-            }, staggerDelay + 300)
-        }
-        else view.alpha = 1.0F
-
-        val multiline = customConfig?.chatPanel?.styling?.buttons?.multiline
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.multiline
-            ?: ChatBackend.config?.chatPanel?.styling?.buttons?.multiline
-            ?: false
-
-        textView.maxLines = if (multiline) Integer.MAX_VALUE else 1
-
-        val listener = View.OnClickListener {
-            if (link?.id == ACTION_LINK_UPLOAD) {
-                Intent(Intent.ACTION_GET_CONTENT).let { intent ->
-                    intent.setType("*/*")
-                    startActivityForResult(intent, FILE_PICKER_REQUEST);
-                }
-            } else link?.url?.let { url ->
-                val parsedUrl = Uri.parse(url)
-                val openUrl = {
-                    Intent(Intent.ACTION_VIEW).let {
-                        it.data = parsedUrl
-                        startActivity(it)
-                    }
-                }
-
-                if (chatResponseViewURLHandlingDelegate == null ||
-                    chatResponseViewURLHandlingDelegate!!.shouldOpenUrl(parsedUrl)) {
-                    openUrl()
-                }
-
-                // Notify backend about URL button click
-                link?.id?.let {
-                    ChatBackend.urlButton(it)
-                }
-
-                // Notify UI observers about URL button click
-                BoostUIEvents.notifyObservers(BoostUIEvents.Event.externalLinkClicked, url)
-            } ?: link?.let {
-                buttonDelegate?.didTapActionButton(this)
-
-                ChatBackend.actionButton(it.id)
-                BoostUIEvents.notifyObservers(BoostUIEvents.Event.actionLinkClicked, it.id)
-
-                val showLinkClickAsChatBubble =
-                    customConfig?.chatPanel?.settings?.showLinkClickAsChatBubble
-                        ?: ChatBackend.customConfig?.chatPanel?.settings?.showLinkClickAsChatBubble
-                        ?: ChatBackend.config?.chatPanel?.settings?.showLinkClickAsChatBubble
-                        ?: ChatPanelDefaults.Settings.showLinkClickAsChatBubble
-
-                if (showLinkClickAsChatBubble) {
-                    ChatBackend.userActionMessage(it.text)
-                }
-            }
-        }
-        onClickListener = listener
-        view.setOnClickListener(listener)
-
-        view.onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
-            val backgroundColor = customConfig?.chatPanel?.styling?.buttons?.backgroundColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.backgroundColor
-                ?: ChatBackend.config?.chatPanel?.styling?.buttons?.backgroundColor
-                ?: ContextCompat.getColor(requireContext(), R.color.buttonBackgroundColor)
-            val focusBackgroundColor =
-                customConfig?.chatPanel?.styling?.buttons?.focusBackgroundColor
-                    ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.focusBackgroundColor
-                    ?: ChatBackend.config?.chatPanel?.styling?.buttons?.focusBackgroundColor
-                    ?: backgroundColor
-            val textColor = customConfig?.chatPanel?.styling?.buttons?.textColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.textColor
-                ?: ChatBackend.config?.chatPanel?.styling?.buttons?.textColor
-                ?: ContextCompat.getColor(requireContext(), android.R.color.white)
-            val focusTextColor = customConfig?.chatPanel?.styling?.buttons?.focusTextColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.focusTextColor
-                ?: ChatBackend.config?.chatPanel?.styling?.buttons?.focusTextColor
-                ?: textColor
-
-            view.background?.setTint(if (hasFocus) focusBackgroundColor else backgroundColor)
-            imageView.imageTintList =
-                ColorStateList.valueOf(if (hasFocus) focusTextColor else textColor)
-            textView.setTextColor(if (hasFocus) focusTextColor else textColor)
-        }
-
-        updateStyling(ChatBackend.config)
         ChatBackend.addConfigObserver(this)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == FILE_PICKER_REQUEST && resultCode == Activity.RESULT_OK) {
-            data?.data?.let { uri ->
-                val contentResolver = requireContext().contentResolver
-
-                val mimeType: String = contentResolver.getType(uri) ?: "application/octet-stream"
-                var name = "file.unknown"
-
-                val cursor = contentResolver.query(uri, null, null, null, null)
-                cursor?.let {
-                    /*
-                     * Get the column indexes of the data in the Cursor,
-                     * move to the first row in the Cursor, get the data,
-                     * and display it.
-                     */
-                    val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    cursor.moveToFirst()
-                    name = cursor.getString(nameIndex)
-                }
-                cursor?.close()
-
-                val fileInputStream = requireContext().contentResolver.openInputStream(uri)
-                val outFile =
-                    java.io.File.createTempFile(name, ".unknown", requireContext().cacheDir)
-                val outputStream = FileOutputStream(outFile)
-                fileInputStream?.copyTo(outputStream)
-
-                val fileUpload = FileUpload(outFile, name, mimeType)
-                ChatBackend.uploadFilesToAPI(listOf(fileUpload), null, object : ChatBackend.APIFileUploadResponseListener {
-                    override fun onFailure(exception: Exception) {}
-                    override fun onResponse(files: List<File>) {
-                        ChatBackend.sendFiles(files)
-                    }
-                })
-                return
-            }
-        }
-
-        super.onActivityResult(requestCode, resultCode, data)
+        updateStyling(ChatBackend.config)
     }
 
     override fun onDestroy() {
@@ -254,43 +117,74 @@ open class ChatMessageButtonFragment(
         ChatBackend.removeConfigObserver(this)
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == FILE_PICKER_REQUEST && resultCode == Activity.RESULT_OK) {
+            data?.data?.let { uri ->
+                // Resolved here: the fragment may be detached by the time the worker runs
+                val contentResolver = requireContext().contentResolver
+                val cacheDir = requireContext().cacheDir
+                val appContext = requireContext().applicationContext
+
+                // Copied off the main thread — blocking I/O against a third-party content
+                // provider, and a large file used to freeze the UI for its duration
+                Thread {
+                    val fileUpload = try {
+                        val mimeType: String =
+                            contentResolver.getType(uri) ?: "application/octet-stream"
+                        var name = "file.unknown"
+
+                        contentResolver.query(uri, null, null, null, null)?.use {
+                            // Content providers are third-party code: the display-name column,
+                            // or a first row, may simply not be there
+                            val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (nameIndex >= 0 && it.moveToFirst()) {
+                                name = it.getString(nameIndex) ?: name
+                            }
+                        }
+
+                        // createTempFile rejects prefixes shorter than three characters, and a
+                        // display name is no place for path separators
+                        val prefix = name.replace('/', '_').padEnd(3, '_')
+                        val outFile = java.io.File.createTempFile(prefix, ".unknown", cacheDir)
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                        }
+
+                        FileUpload(outFile, name, mimeType)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        // The bot showed the upload button and is waiting for a file — failing
+                        // with no trace at all left the conversation hanging
+                        Handler(Looper.getMainLooper()).post {
+                            android.widget.Toast.makeText(
+                                appContext, no.boostai.sdk.R.string.unknown_error, android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return@Thread
+                    }
+
+                    Handler(Looper.getMainLooper()).post {
+                        ChatBackend.uploadFilesToAPI(
+                            listOf(fileUpload),
+                            null,
+                            object : ChatBackend.APIFileUploadResponseListener {
+                                override fun onFailure(exception: Exception) {}
+                                override fun onResponse(files: List<File>) {
+                                    ChatBackend.sendFiles(files)
+                                }
+                            }
+                        )
+                    }
+                }.start()
+                return
+            }
+        }
+
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     fun updateStyling(config: ChatConfig?) {
-        if (config == null) return
-
-        @ColorInt val textColor = customConfig?.chatPanel?.styling?.buttons?.textColor
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.textColor
-            ?: config.chatPanel?.styling?.buttons?.textColor
-            ?: ContextCompat.getColor(requireContext(), R.color.buttonTextColor)
-        @ColorInt val backgroundColor = customConfig?.chatPanel?.styling?.buttons?.backgroundColor
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.buttons?.backgroundColor
-            ?: config.chatPanel?.styling?.buttons?.backgroundColor
-            ?: ContextCompat.getColor(requireContext(), R.color.buttonBackgroundColor)
-
-        val linkDrawable: Int
-
-        if (link?.id == ACTION_LINK_UPLOAD) linkDrawable = R.drawable.ic_upload_files
-        else if (link?.type == LinkType.EXTERNAL_LINK) {
-            if (link?.isAttachment == true)
-                linkDrawable = R.drawable.ic_file
-            else
-                linkDrawable = R.drawable.ic_external_link_icon
-        }
-        else linkDrawable = R.drawable.ic_arrow_right
-        textView.setTextColor(textColor)
-        imageView.setImageResource(linkDrawable)
-        imageView.imageTintList = ColorStateList.valueOf(textColor)
-        view?.background?.setTint(backgroundColor)
-
-        @FontRes val bodyFont = customConfig?.chatPanel?.styling?.fonts?.bodyFont
-            ?: ChatBackend.customConfig?.chatPanel?.styling?.fonts?.bodyFont
-            ?: ChatBackend.config?.chatPanel?.styling?.fonts?.bodyFont
-
-        bodyFont?.let {
-            try {
-                val typeface = ResourcesCompat.getFont(requireContext().applicationContext, it)
-                textView.typeface = typeface
-            } catch (e: java.lang.Exception) {}
-        }
+        if (::buttonView.isInitialized) buttonView.applyStyling()
     }
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) = updateStyling(config)
@@ -303,18 +197,15 @@ open class ChatMessageButtonFragment(
     }
     override fun onAnimationRepeat(p0: Animation?) {}
 
-    override fun didTapActionButton(fragment: ChatMessageButtonFragment) {}
+    override fun didTapActionButton(fragment: ChatMessageButtonFragment) {
+        buttonDelegate?.didTapActionButton(fragment)
+    }
 
     override fun disableActionButtons() {
-        view?.setOnClickListener(null)
-        view?.background?.alpha = 127
+        if (::buttonView.isInitialized) buttonView.disable()
     }
 
     override fun enableActionButtons(makeInteractable: Boolean) {
-        view?.background?.alpha = 255
-
-        if (makeInteractable) {
-            view?.setOnClickListener(onClickListener)
-        }
+        if (::buttonView.isInitialized) buttonView.enable(makeInteractable)
     }
 }

@@ -17,7 +17,7 @@
 
     <LinearLayout
         android:id="@+id/chat_message_parts"
-        android:layout_width="271dp"
+        android:layout_width="@dimen/chat_view_part_min_width"
         android:layout_height="wrap_content"
         android:orientation="vertical" />
 

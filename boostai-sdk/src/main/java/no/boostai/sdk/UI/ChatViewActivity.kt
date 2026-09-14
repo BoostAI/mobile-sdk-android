@@ -52,6 +52,17 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
     var chatResponseViewURLHandlingDelegate: ChatResponseViewURLHandlingDelegate? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // AppCompatActivity crashes under a theme without the AppCompat attributes. Fall back to
+        // a bundled theme only in that case — done in code rather than the manifest, where a
+        // theme attribute would be a hard merge conflict for hosts declaring this activity
+        // themselves, and would silently replace the application theme for everyone else.
+        val attrs = obtainStyledAttributes(intArrayOf(androidx.appcompat.R.attr.windowActionBar))
+        val hasAppCompatTheme = attrs.hasValue(0)
+        attrs.recycle()
+        if (!hasAppCompatTheme) {
+            setTheme(androidx.appcompat.R.style.Theme_AppCompat_Light_NoActionBar)
+        }
+
         super.onCreate(savedInstanceState)
 
         enableEdgeToEdge()
@@ -77,10 +88,25 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
             isDialog = it.getBoolean(IS_DIALOG)
             customConfig = it.getParcelable(CUSTOM_CONFIG)
         }
-        supportFragmentManager
-            .beginTransaction()
-            .add(R.id.chat_view_activity_content, getChatViewFragment(), "chat_view")
-            .commitAllowingStateLoss()
+        // Only on first creation: on a configuration change the FragmentManager restores the
+        // previous instance, and adding another on top would run two conversations at once —
+        // one more per rotation.
+        if (savedInstanceState == null) {
+            supportFragmentManager
+                .beginTransaction()
+                .add(R.id.chat_view_activity_content, getChatViewFragment(), "chat_view")
+                .commitAllowingStateLoss()
+        } else {
+            // The restored instance is built through its no-arg constructor: it recovers
+            // isDialog/customConfig from its own saved state, but delegates are not parcelable —
+            // without this rewiring, a subclass' custom rendering and URL handling silently fell
+            // back to the defaults after the first rotation.
+            (supportFragmentManager.findFragmentByTag("chat_view") as? ChatViewFragment)?.let {
+                it.delegate = it.delegate ?: chatViewFragmentDelegate
+                it.chatResponseViewURLHandlingDelegate =
+                    it.chatResponseViewURLHandlingDelegate ?: chatResponseViewURLHandlingDelegate
+            }
+        }
         ChatBackend.addConfigObserver(this)
         updateStyling(ChatBackend.config)
 
@@ -129,8 +155,11 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
             ?: customConfig?.messages?.get(ChatBackend.languageCode)?.headerText
             ?: ChatBackend.customConfig?.messages?.get(ChatBackend.languageCode)?.headerText
             ?: config.messages?.get(ChatBackend.languageCode)?.headerText
+        // %06X instead of toHexString().substring(2): toHexString drops leading zeros, so a color
+        // int below 0x10000000 produced a short string and the substring threw — reachable
+        // whenever a config served a low-alpha color
         supportActionBar?.title =
-            Html.fromHtml("<font color=\"#" + Integer.toHexString(contrastColor).substring(2) + "\">" + title + "</font>")
+            Html.fromHtml("<font color=\"#%06X\">".format(0xFFFFFF and contrastColor) + title + "</font>")
         supportActionBar?.setDisplayShowTitleEnabled(title != null)
     }
 
@@ -145,9 +174,7 @@ open class ChatViewActivity: AppCompatActivity(R.layout.chat_view_activity), Cha
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) = updateStyling(config)
 
-    override fun onFailure(backend: ChatBackend, error: Exception) {
-        TODO("Not yet implemented")
-    }
+    override fun onFailure(backend: ChatBackend, error: Exception) {}
 
     fun getChatViewFragment(): Fragment = ChatViewFragment(isDialog, customConfig, chatViewFragmentDelegate, chatResponseViewURLHandlingDelegate)
 

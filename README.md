@@ -48,7 +48,7 @@ Add the boost.ai SDK library as a dependency in your app `build.gradle` file:
 
 ```kotlin
 dependencies { 
-  implementation 'com.github.BoostAI:mobile-sdk-android:1.2.31'
+  implementation 'com.github.BoostAI:mobile-sdk-android:1.3.0'
 }
 ```
 
@@ -71,7 +71,7 @@ Add the dependency:
 <dependency>
     <groupId>com.github.BoostAI</groupId>
     <artifactId>mobile-sdk-android</artifactId>
-    <version>1.2.31</version>
+    <version>1.3.0</version>
 </dependency>
 ```
 
@@ -374,7 +374,7 @@ If you want to override the display of responses from the server, you can assign
 val chatViewFragment = ChatViewFragment(delegate = this)
 ```
 
-In order to display a view for a custom JSON object, return a view for the `json` type (return nil will lead the `ChatResponseView` to handle it).
+In order to display a view for a custom JSON object, return a view for the `JSON` element type (returning `null` will let the SDK handle it).
 
 Use the `JSONDecoder` to parse the JSON with a custom class describing the JSON object, i.e. for the "genericCard" default template, where the object looks like: 
 
@@ -437,20 +437,20 @@ class GenericCard {
 Return a view that displays the data:
 
 ```kotlin
-class MyChatViewFragmentDelegate : ChatViewFragmentDelegate {
-    override fun getChatMessagePartFragment(
+class MyChatViewFragmentDelegate(private val context: Context) : ChatViewFragmentDelegate {
+    override fun getChatMessagePartView(
         element: Element,
         responseId: String?,
         isClient: Boolean,
         animated: Boolean
-    ): Fragment? {
+    ): View? {
         when (element.type) {
-            ElementType.json -> {
+            ElementType.JSON -> {
                 element.payload.json?.let {
                     try {
                         val genericCard =
                             Json.decodeFromJsonElement<GenericCard>(it)
-                        return MyCustomJsonFragment(genericCard)
+                        return MyCustomJsonView(context, genericCard)
                     } catch (e: SerializationException) {
                         return null
                     }
@@ -465,26 +465,38 @@ class MyChatViewFragmentDelegate : ChatViewFragmentDelegate {
 }
 ```
 
-If you want more control, you can return a `Fragment` subclass from the `getChatMessageFragment(response: Response, animated: Boolean)` method or the `getChatMessagePartFragment(element: Element, responseId: String?, isClient: Boolean = false, animated: Boolean = true)` method, which will be called for each message that arrives from the server or the user:
+A view returned here takes part in the normal message flow: it is revealed in order and in pace with the SDK's own message parts, in animated messages too.
+
+Two optional interfaces let a custom view take part in the rest of the message behaviour. Implement `ChatMessageFeedbackDelegate` to receive `showFeedbackButtons()` when the view is the last element of a message that allows feedback, so it can show its own thumbs up/down row. Implement `ChatMessageButtonDelegate` to have any action buttons in the view dimmed and re-enabled together with the SDK's own — this works for views returned from `getChatMessageView` too. Views only receive `disableActionButtons()` and `enableActionButtons(makeInteractable)`; `didTapActionButton` is only called on the fragment path.
+
+If you want control over the whole message rather than a single element, return a `View` from `getChatMessageView(response: Response, animated: Boolean)`, which is called for each message that arrives from the server or the user:
 
 ```kotlin
-class MyClass: ChatViewFragmentDelegate {
+class MyClass : ChatViewFragmentDelegate {
 
-    fun getChatMessageFragment(response: Response,
-                               animated: Boolean): Fragment? {
+    override fun getChatMessageView(response: Response,
+                                    animated: Boolean): View? {
         ...
     }
 
-    fun getChatMessagePartFragment(element: Element,
-                                   responseId: String?,
-                                   isClient: Boolean = false,
-                                   animated: Boolean = true): Fragment? {
+    override fun getChatMessagePartView(element: Element,
+                                        responseId: String?,
+                                        isClient: Boolean,
+                                        animated: Boolean): View? {
         ...
     }
-    
+
     ...
 }
 ```
+
+The SDK's own element views (`ChatMessageTextView`, `ChatMessageImageView`, `ChatMessageButtonView`, `ChatMessageCarouselView`, `ChatMessageGenericJSONView` and `ChatMessageVideoView`) are `open` and expose their subviews as properties (`textView`, `imageView` and so on), so subclassing one of them is often easier than building a view from scratch. Note that a view returned from `getChatMessagePartView` replaces the SDK's whole part, including its feedback row — implement `ChatMessageFeedbackDelegate` if you need one.
+
+#### Deprecated fragment hooks
+
+Earlier SDK versions rendered messages as fragments, and the delegate hooks returned fragments: `getChatMessageFragment(response, animated)` and `getChatMessagePartFragment(element, responseId, isClient, animated)`. These hooks are deprecated but still honoured, so existing integrations are unaffected. The choice is made per message: a message for which either hook returns a fragment is rendered on the old fragment path (the whole message, including elements the part hook returned `null` for), while every other message is drawn as views.
+
+Migrating to the view hooks is recommended: the FragmentManager persists a record for every fragment, so the fragment path's saved state grows with the number of messages rendered that way, which on long conversations can crash the host app with a `TransactionTooLargeException`. Views add nothing to the saved state.
 
 ### Subscribe to UI events
 

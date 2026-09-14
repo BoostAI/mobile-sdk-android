@@ -247,6 +247,10 @@ open class ChatViewSettingsFragment(
             override fun onFailure(exception: Exception) {}
 
             override fun onResponse(apiMessage: APIMessage) {
+                // The response arrives asynchronously; getString/startActivity on a detached
+                // fragment (menu closed or rotated while downloading) throws IllegalStateException
+                if (!isAdded) return
+
                 if (apiMessage.download != null) {
                     val intent = Intent(Intent.ACTION_SEND)
 

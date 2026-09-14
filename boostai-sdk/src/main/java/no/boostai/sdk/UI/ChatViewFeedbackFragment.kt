@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.fragment.app.Fragment
 import no.boostai.sdk.ChatBackend.ChatBackend
+import no.boostai.sdk.ChatBackend.Objects.Response.APIMessage
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
 import no.boostai.sdk.ChatBackend.Objects.FeedbackValue
 import no.boostai.sdk.R
@@ -188,17 +189,7 @@ open class ChatViewFeedbackFragment(
         }
 
         val rating = if (feedbackValue == FeedbackValue.POSITIVE) 1 else -1
-        val feedbackText = feedbackEditText.text.toString()
-        ChatBackend.conversationFeedback(rating, feedbackText)
-
-        // Publish events
-        val event = if (rating > 0) BoostUIEvents.Event.positiveConversationFeedbackGiven else
-            BoostUIEvents.Event.negativeConversationFeedbackGiven
-        BoostUIEvents.notifyObservers(event)
-
-        if (feedbackText.isNotEmpty()) {
-            BoostUIEvents.notifyObservers(BoostUIEvents.Event.conversationFeedbackTextGiven)
-        }
+        sendFeedback(rating, feedbackEditText.text.toString())
 
         this.feedbackValue = feedbackValue
         feedbackState = FeedbackState.PROMPT_FOR_TEXT
@@ -209,16 +200,7 @@ open class ChatViewFeedbackFragment(
         if (feedbackValue == null) return
 
         val rating = if (feedbackValue == FeedbackValue.POSITIVE) 1 else -1
-        val feedbackText = feedbackEditText.text.toString()
-        ChatBackend.conversationFeedback(rating, feedbackText)
-
-        // Publish events
-        val event = if (rating > 0) BoostUIEvents.Event.positiveConversationFeedbackGiven else BoostUIEvents.Event.negativeConversationFeedbackGiven
-        BoostUIEvents.notifyObservers(event)
-
-        if (feedbackText.isNotEmpty()) {
-            BoostUIEvents.notifyObservers(BoostUIEvents.Event.conversationFeedbackTextGiven)
-        }
+        sendFeedback(rating, feedbackEditText.text.toString())
 
         if (isDialog && settingsDelegate != null) {
             settingsDelegate?.closeChat()
@@ -227,6 +209,46 @@ open class ChatViewFeedbackFragment(
 
         feedbackState = FeedbackState.COMPLETE
         updateState()
+    }
+
+    private var sentRating: Int? = null
+    private var sentText: String = ""
+
+    /**
+     * Send the rating/text to the backend, but only what has actually changed: the thumb tap
+     * already sends the rating, and submit used to unconditionally send (and fire events for)
+     * the same rating again — every tap-then-submit produced two API calls and duplicate
+     * feedback-given events.
+     */
+    private fun sendFeedback(rating: Int, text: String) {
+        if (rating == sentRating && text == sentText) return
+
+        val previousRating = sentRating
+        val previousText = sentText
+        ChatBackend.conversationFeedback(rating, text, object : ChatBackend.APIMessageResponseListener {
+            override fun onFailure(exception: Exception) {
+                // Nothing reached the server, so the same tap or submit must be allowed to try
+                // again — as it always was before the duplicate guard
+                if (sentRating == rating && sentText == text) {
+                    sentRating = previousRating
+                    sentText = previousText
+                }
+            }
+
+            override fun onResponse(apiMessage: APIMessage) {}
+        })
+
+        if (rating != sentRating) {
+            val event = if (rating > 0) BoostUIEvents.Event.positiveConversationFeedbackGiven
+            else BoostUIEvents.Event.negativeConversationFeedbackGiven
+            BoostUIEvents.notifyObservers(event)
+        }
+        if (text.isNotEmpty() && text != sentText) {
+            BoostUIEvents.notifyObservers(BoostUIEvents.Event.conversationFeedbackTextGiven)
+        }
+
+        sentRating = rating
+        sentText = text
     }
 
     fun hide() {

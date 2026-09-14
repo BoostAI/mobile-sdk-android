@@ -4,4 +4,6 @@
     <dimen name="settings_text_size_small">20sp</dimen>
     <dimen name="settings_vertical_spacing">25sp</dimen>
     <dimen name="chat_view_part_min_width">256dp</dimen>
+    <!-- Extra breathing room below a message from the user -->
+    <dimen name="chat_message_client_spacing">10dp</dimen>
 </resources>

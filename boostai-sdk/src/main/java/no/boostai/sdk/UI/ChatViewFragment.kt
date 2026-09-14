@@ -52,6 +52,7 @@ import androidx.annotation.FontRes
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.drawable.DrawableCompat
+import androidx.core.view.OneShotPreDrawListener
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
@@ -67,6 +68,7 @@ import no.boostai.sdk.ChatBackend.Objects.FileUpload
 import no.boostai.sdk.ChatBackend.Objects.Response.APIMessage
 import no.boostai.sdk.ChatBackend.Objects.Response.ChatStatus
 import no.boostai.sdk.ChatBackend.Objects.Response.Response
+import no.boostai.sdk.ChatBackend.Objects.Response.SDKSerializationException
 import no.boostai.sdk.ChatBackend.Objects.Response.SourceType
 import no.boostai.sdk.R
 import no.boostai.sdk.UI.Events.BoostUIEvents
@@ -96,6 +98,14 @@ open class ChatViewFragment(
 
     private val FILE_PICKER_REQUEST = 847321
 
+    /**
+     * File picks originating from an "upload a file" action button. Kept apart from
+     * [FILE_PICKER_REQUEST]: a file picked through the composer becomes a pending attachment the
+     * user still has to send, while one picked through an action button is uploaded and sent
+     * immediately, with no further step.
+     */
+    private val ACTION_UPLOAD_REQUEST = 847322
+
     val conversationIdKey = "conversationId"
     val isDialogKey = "isDialog"
     val customConfigKey = "customConfig"
@@ -110,6 +120,15 @@ open class ChatViewFragment(
     val storedRememberConversationExpiryKey = "rememberConversationExpiryKey"
     
     val errorId = "error"
+    val statusMessageKey = "statusMessage"
+    val statusMessageIsErrorKey = "statusMessageIsError"
+    val statusMessageRetryKey = "statusMessageRetry"
+    val hasResumedWithUserTokenKey = "hasResumedWithUserToken"
+
+    /** The status message currently on screen, if any, so it can survive a configuration change. */
+    private var statusMessage: String? = null
+    private var statusMessageIsError = false
+    private var statusMessageRetry = false
     val settingsFragmentId = "settings"
     val feedbackFragmentId = "feedback"
     lateinit var chatContent: FrameLayout
@@ -158,6 +177,13 @@ open class ChatViewFragment(
     var startConversationOnLoad: Boolean = true
 
     var pendingFileUploads: ArrayList<File> = ArrayList()
+
+    /**
+     * The composer upload failure most recently shown as a red chip, so the observer
+     * [onFailure] that hears about the same exception next can skip the banner. Compared by
+     * identity; not saved, as both deliveries happen back to back on the main thread.
+     */
+    private var uploadFailureShownAsChip: Exception? = null
     var pendingFileUploadFragments: ArrayList<FileUploadFragment> = ArrayList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -168,7 +194,7 @@ open class ChatViewFragment(
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            conversationId = conversationId ?: it.getString(conversationId)
+            conversationId = conversationId ?: it.getString(conversationIdKey)
             isDialog = it.getBoolean(isDialogKey)
             customConfig = it.getParcelable(customConfigKey)
             // TODO: Parcelable delegate?
@@ -176,11 +202,19 @@ open class ChatViewFragment(
 
             lastAvatarURL = it.getString(lastAvatarUrlKey)
             maxCharacterCount = it.getInt(maxCharacterCountKey)
-            messages = it.getParcelableArrayList(messagesKey) ?: ArrayList()
-            responses = it.getParcelableArrayList(responsesKey) ?: ArrayList()
+            // `messages` and `responses` are deliberately *not* restored from the bundle. They are
+            // rebuilt from `ChatBackend.messages` in `startOrResumeConversation`, which already
+            // replays the whole conversation on every launch. Parcelling them here duplicated the
+            // entire conversation into the saved state and was the main contributor to
+            // TransactionTooLargeException on long conversations.
             isBlocked = it.getBoolean(isBlockedKey)
             isSecureChat = it.getBoolean(isSecureChatKey)
+            statusMessage = it.getString(statusMessageKey)
+            statusMessageIsError = it.getBoolean(statusMessageIsErrorKey)
+            statusMessageRetry = it.getBoolean(statusMessageRetryKey)
         }
+        // Saved state only, never arguments: a fresh open must resume, a rebuilt one must not
+        hasResumedWithUserToken = savedInstanceState?.getBoolean(hasResumedWithUserTokenKey) ?: false
 
         setBackendProperties()
 
@@ -191,18 +225,20 @@ open class ChatViewFragment(
     override fun onPause() {
         super.onPause()
 
-        ChatBackend.stopPolling();
+        // Suspended, not merely stopped: a poll response landing after this must not restart
+        // the timer while the chat is out of sight. onResume lifts the suspension.
+        ChatBackend.suspendPolling()
     }
 
     override fun onResume() {
         super.onResume()
 
-        val chatStatus =
-            ChatBackend.lastResponse?.conversation?.state?.chatStatus ?:
-            ChatStatus.VIRTUAL_AGENT
-        if (chatStatus == ChatStatus.IN_HUMAN_CHAT_QUEUE || chatStatus == ChatStatus.ASSIGNED_TO_HUMAN) {
-            ChatBackend.startPolling()
-        }
+        // The chat is visible again, so the pause-time suspension no longer applies — cleared
+        // unconditionally, or a suspension picked up in the virtual-agent phase would block
+        // polling when the user is later transferred to a human agent
+        ChatBackend.allowPolling()
+
+        if (ChatBackend.isInHumanChat) ChatBackend.startPolling()
     }
 
     override fun onDestroy() {
@@ -220,10 +256,16 @@ open class ChatViewFragment(
         outState.putParcelable(customConfigKey, customConfig)
         outState.putString(lastAvatarUrlKey, lastAvatarURL)
         outState.putInt(maxCharacterCountKey, maxCharacterCount)
-        outState.putParcelableArrayList(messagesKey, messages)
-        outState.putParcelableArrayList(responsesKey, responses)
+        // NB: `messages`/`responses` are not written here on purpose — see `onCreate`.
         outState.putBoolean(isBlockedKey, isBlocked)
         outState.putBoolean(isSecureChatKey, isSecureChat)
+        // Status messages come from `onFailure`, not from `ChatBackend.messages`, so the replay in
+        // `startOrResumeConversation` cannot rebuild them — an error banner (and its Retry button)
+        // has to be carried over explicitly or a rotation silently swallows it.
+        outState.putString(statusMessageKey, statusMessage)
+        outState.putBoolean(statusMessageIsErrorKey, statusMessageIsError)
+        outState.putBoolean(statusMessageRetryKey, statusMessageRetry)
+        outState.putBoolean(hasResumedWithUserTokenKey, hasResumedWithUserToken)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -253,7 +295,13 @@ open class ChatViewFragment(
 
         val inputWrapperOriginalPaddingBottom = chatInputWrapper.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(chatInputWrapper) { v, windowInsets ->
-            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // ime() included: with enforced edge-to-edge (targetSdk 35+) a host window without
+            // legacy adjustResize behaviour doesn't shrink for the keyboard, which would
+            // otherwise cover the composer. When the window does resize, the dispatched ime
+            // inset is zero, so nothing is double-padded.
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+            )
             v.updatePadding(bottom = inputWrapperOriginalPaddingBottom + insets.bottom)
             windowInsets
         }
@@ -337,7 +385,10 @@ open class ChatViewFragment(
             submitText(text)
         }
         fileUploadButton.setOnClickListener {
-            if (isBlocked || pendingFileUploads.isNotEmpty()) {
+            // isCopyingPickedFile closes the async window: the pending chip only appears once
+            // the background copy completes, so the list-emptiness guard alone let a second tap
+            // during a slow copy queue a second attachment in a UI built for one
+            if (isBlocked || pendingFileUploads.isNotEmpty() || isCopyingPickedFile) {
                 return@setOnClickListener
             }
 
@@ -353,10 +404,61 @@ open class ChatViewFragment(
         // Update styling
         updateStyling(ChatBackend.config)
 
+        // Drop any message fragments the FragmentManager restored for us. They come back without
+        // their payload (see `onCreate`), and the conversation is replayed from
+        // `ChatBackend.messages` below anyway. Only the message container is cleared, so an open
+        // settings/feedback sheet (added to `R.id.chat_content`) survives the restore.
+        if (savedInstanceState != null) {
+            discardRestoredMessageFragments()
+
+            // Put back the status message the restored fragments just took with them. If the
+            // conversation resumes successfully it is hidden again, exactly as it would have been
+            // had the rotation not happened.
+            statusMessage?.let { presentStatusMessage(it, statusMessageIsError, statusMessageRetry) }
+
+            // A restored settings/feedback sheet comes back with a null delegate (delegates are
+            // not parcelable), which left Back, Close and Delete dead — and since the sheet's
+            // root swallows clicks, the user was stuck on it. Rewire them.
+            (childFragmentManager.findFragmentByTag(settingsFragmentId)
+                    as? ChatViewSettingsFragment)?.let {
+                it.menuDelegate = this
+                it.customConfig = it.customConfig ?: customConfig
+            }
+            (childFragmentManager.findFragmentByTag(feedbackFragmentId)
+                    as? ChatViewFeedbackFragment)?.let {
+                it.settingsDelegate = this
+                it.customConfig = it.customConfig ?: customConfig
+            }
+        }
+
         // Start
         if (startConversationOnLoad) {
             start()
+        } else if (ChatBackend.messages.isNotEmpty()) {
+            // A host that starts the conversation itself (SSO flows) still needs the transcript
+            // back after a view recreation: messages are views and die with the view, and the
+            // replay otherwise only runs from start(). Render-only — no START/RESUME is sent.
+            replayConversation()
         }
+    }
+
+    /**
+     * Synchronously remove every fragment restored into the message container, so the conversation
+     * can be rendered from scratch without colliding with the restored ones. Restored upload chips
+     * go too: `pendingFileUploads` is not saved, so a restored chip would be an orphan with no
+     * backing state.
+     */
+    fun discardRestoredMessageFragments() {
+        val restored = childFragmentManager.fragments.filter {
+            it.id == R.id.chat_messages || it.id == R.id.file_uploads_wrapper
+        }
+        if (restored.isEmpty()) return
+
+        val transaction = childFragmentManager.beginTransaction()
+        restored.forEach { transaction.remove(it) }
+        transaction.commitNowAllowingStateLoss()
+
+        waitingForAgentResponseFragmentTags.clear()
     }
 
     /**
@@ -416,17 +518,43 @@ open class ChatViewFragment(
         })
     }
 
+    /**
+     * Re-render the whole conversation from [ChatBackend.messages] into the current view.
+     * Render-only — nothing is sent.
+     */
+    fun replayConversation() {
+        setIsBlocked(ChatBackend.isBlocked)
+        ChatBackend.messages.forEach { handleReceivedMessage(it, animated = false, isReplay = true) }
+        isBlocked = ChatBackend.isBlocked
+    }
+
+    /**
+     * Whether this open of the chat has already resumed with the user token.
+     *
+     * Per open, not per fragment instance: it is carried through the saved instance state, so
+     * the fragment the FragmentManager rebuilds on a rotation inherits it, while a fresh open
+     * starts at false. Kept out of [ChatBackend] on purpose — a singleton flag is shared by
+     * every live chat fragment (an embedded one and the modal activity, say), so one open would
+     * skip its resume and another's close would re-arm the duplicate.
+     */
+    private var hasResumedWithUserToken = false
+
     fun startOrResumeConversation(conversationId: String? = null) {
         val messages = ChatBackend.messages
 
-        setIsBlocked(ChatBackend.isBlocked)
-        messages.forEach { handleReceivedMessage(it, false) }
-        isBlocked = ChatBackend.isBlocked
-        // Start new conversation if no messages exists
-        if (messages.size == 0 || ChatBackend.userToken != null) {
+        replayConversation()
+        // Start when there is no local conversation to replay; with a user token, also resume
+        // the first time this open of the chat sits over an existing one — that refreshes the
+        // conversation with the current token and runs triggerActionOnResume, as every open
+        // always has. Once per open, though: resuming from every rebuilt fragment sent another
+        // RESUME on each rotation and, with startTriggerActionId + triggerActionOnResume,
+        // re-fired the trigger action, appending duplicate bot responses every time.
+        val resumeWithUserToken = ChatBackend.userToken != null && !hasResumedWithUserToken
+        if (messages.size == 0 || resumeWithUserToken) {
             showWaitingForAgentResponseIndicator()
 
             if (conversationId != null || ChatBackend.userToken != null) {
+                hasResumedWithUserToken = ChatBackend.userToken != null
                 // Make sure we don't animate in the message when resuming a conversation
                 animateMessages = false
 
@@ -453,6 +581,9 @@ open class ChatViewFragment(
 
                 ChatBackend.resume(resumeCommand, object : ChatBackend.APIMessageResponseListener {
                     override fun onFailure(exception: Exception) {
+                        // Nothing was resumed, so a rebuilt fragment gets to try again
+                        hasResumedWithUserToken = false
+
                         if (!isAdded) return
 
                         animateMessages = true
@@ -506,6 +637,13 @@ open class ChatViewFragment(
         editText.inputType =
             if (isBlocked) InputType.TYPE_NULL else InputType.TYPE_CLASS_TEXT or
                     InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        if (!isBlocked) {
+            // While blocked, clientTyping reports max length 0 and updateInputStates installs a
+            // LengthFilter(0). That filter rejects every character, so afterTextChanged can never
+            // run to replace it — without this reset the composer stayed dead after unblocking.
+            maxCharacterCount = ChatBackend.maxInputChars
+            editText.filters = arrayOf(InputFilter.LengthFilter(maxCharacterCount))
+        }
         editText.hint =
             if (isBlocked) null
             else {
@@ -518,8 +656,30 @@ open class ChatViewFragment(
     }
 
     override fun onMessageReceived(backend: ChatBackend, message: APIMessage) {
+        // The view can be gone while the fragment stays alive (on the back stack, for one).
+        // Rendering into the dead view tree would also add the response to `responses`, and the
+        // replay into the next view would then dedupe it away — losing the message for good; the
+        // skipped message is still in ChatBackend.messages and comes back with the replay. The
+        // conversation bookkeeping still runs: the remembered id must reach the preferences even
+        // if the process dies before a new view exists.
+        if (view == null) {
+            recordConversationMetadata(message)
+            return
+        }
+
         setIsBlocked(ChatBackend.isBlocked)
         handleReceivedMessage(message, animateMessages)
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+
+        // The rendered output dies with the view, so the bookkeeping must die with it: the next
+        // onViewCreated replays the conversation from ChatBackend.messages, and anything left in
+        // `responses` would be deduped away — a back-stack pop used to come back to an empty
+        // transcript because of exactly that.
+        responses = ArrayList()
+        messages = ArrayList()
     }
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) {
@@ -533,16 +693,30 @@ open class ChatViewFragment(
     override fun onFailure(backend: ChatBackend, error: Exception) {
         if (!isAdded) return
 
+        // A composer upload failure has already been shown as a red chip by its own listener;
+        // the banner on top of that is one failure reported twice
+        if (error === uploadFailureShownAsChip) {
+            uploadFailureShownAsChip = null
+            return
+        }
+
         hideWaitingForAgentResponseIndicator()
-        showStatusMessage(error.localizedMessage ?: getString(R.string.unknown_error), error, true)
+        // An SDKSerializationException means the server's answer made no sense; its English
+        // description is for logs, the banner gets the localised generic error
+        val message =
+            if (error is SDKSerializationException) getString(R.string.unknown_error)
+            else error.localizedMessage ?: getString(R.string.unknown_error)
+        showStatusMessage(message, error, true)
     }
 
-    fun handleReceivedMessage(message: APIMessage, animated: Boolean = true) {
+    fun handleReceivedMessage(message: APIMessage, animated: Boolean = true, isReplay: Boolean = false) {
         // If we have a postedId, update the first message with a temporary ID
         message.postedId?.let { postedId ->
+            // `indexOfFirst` returns -1 when there is no pending temporary response — which is the
+            // normal case right after a state restore, since `responses` is rebuilt from scratch.
             val firstTemporaryId = responses.indexOfFirst { r -> r.isTempId }
-            firstTemporaryId.let { id ->
-                val m = responses[id]
+            if (firstTemporaryId >= 0) {
+                val m = responses[firstTemporaryId]
                 val messageCopy = Response(
                     id = postedId.toString(),
                     source = m.source,
@@ -550,28 +724,27 @@ open class ChatViewFragment(
                     elements = m.elements,
                     dateCreated = m.dateCreated
                 )
-                responses[id] = messageCopy
+                responses[firstTemporaryId] = messageCopy
             }
         }
 
         val messageResponses =
             message.responses?.let { ArrayList(message.responses) } ?: ArrayList()
 
-        messages.add(message)
+        // The retry path replays over an already-populated list; duplicates would skew the
+        // welcome-message index math below
+        if (!messages.contains(message)) messages.add(message)
         message.response?.let { messageResponses.add(it) }
 
-        // Save conversation id if applicable
-        val rememberConversation = customConfig?.chatPanel?.settings?.rememberConversation
-            ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversation
-            ?: ChatBackend.config?.chatPanel?.settings?.rememberConversation
-            ?: ChatPanelDefaults.Settings.rememberConversation
-        if (rememberConversation) {
-            message.conversation?.id.let {
-                storeConversationId(it)
-            }
-        }
+        recordConversationMetadata(message)
 
-        val allowHumanChatFileUpload = message.conversation?.state?.allowHumanChatFileUpload == true && ChatBackend.lastResponse?.conversation?.state?.poll == true && ChatBackend.fileUploadServiceEndpointUrl != null
+        // The backend's merged flags, not this message's own fields: the server sends both
+        // intermittently, and locally-echoed client messages carry no conversation at all — the
+        // per-message read made the attach button vanish the moment the user sent anything.
+        // isInHumanChat rather than the bare poll flag: that flag is sticky, so once the human
+        // handed back to the virtual agent with poll omitted, the button would have stayed.
+        val allowHumanChatFileUpload = ChatBackend.allowHumanChatFileUpload &&
+                ChatBackend.isInHumanChat && ChatBackend.fileUploadServiceEndpointUrl != null
         fileUploadButton.visibility = if (allowHumanChatFileUpload) View.VISIBLE else View.GONE
 
         messageResponses.forEachIndexed { index, response ->
@@ -610,10 +783,16 @@ open class ChatViewFragment(
                 ChatBackend.lastResponse?.conversation?.state?.chatStatus ?:
                     ChatStatus.VIRTUAL_AGENT
 
-            if (
-                response.source == SourceType.CLIENT &&
-                    chatStatus == ChatStatus.VIRTUAL_AGENT && animated
-            )
+            // An UNKNOWN status that isn't polling behaves like the virtual agent here — unknown
+            // statuses used to decode as VIRTUAL_AGENT and showed the dots; leaving the user with
+            // no feedback at all after sending would be the opposite of degrading gracefully. A
+            // polling UNKNOWN is human-chat-like, where the dots are wrong. The same
+            // isInHumanChat that drives polling and the attach button decides "polling" here, so
+            // the three can't disagree (the merged ChatBackend.poll can be stale residue from an
+            // earlier human chat that ended with the flag omitted).
+            val waitsForAgent = chatStatus == ChatStatus.VIRTUAL_AGENT ||
+                    (chatStatus == ChatStatus.UNKNOWN && !ChatBackend.isInHumanChat)
+            if (response.source == SourceType.CLIENT && waitsForAgent && animated)
                 showWaitingForAgentResponseIndicator()
             else hideWaitingForAgentResponseIndicator()
             // Should we show the "Secure chat" badge?
@@ -643,7 +822,11 @@ open class ChatViewFragment(
             secureChatWrapper.visibility = if (isSecureChat) View.VISIBLE else View.GONE
         }
 
-        hideStatusMessage()
+        // A replay re-renders what is already known; only a genuinely new server message is
+        // evidence that the connection works, and only that should clear an error banner — the
+        // replay after a rotation used to remove the very banner the restore had just put back,
+        // taking the Retry button with it.
+        if (!isReplay) hideStatusMessage()
         updateTranslatedMessages()
         enableActionButtons()
 
@@ -654,6 +837,27 @@ open class ChatViewFragment(
             showHumanTypingIndicator()
         } else {
             hideHumanTypingIndicator()
+        }
+    }
+
+    /**
+     * Persist and publish the conversation metadata a message carries. Kept apart from the
+     * rendering so it also runs for messages that arrive while the view is gone — the remembered
+     * conversation id must reach the preferences even if the process dies before a new view is
+     * created.
+     */
+    private fun recordConversationMetadata(message: APIMessage) {
+        val rememberConversation = customConfig?.chatPanel?.settings?.rememberConversation
+            ?: ChatBackend.customConfig?.chatPanel?.settings?.rememberConversation
+            ?: ChatBackend.config?.chatPanel?.settings?.rememberConversation
+            ?: ChatPanelDefaults.Settings.rememberConversation
+        if (rememberConversation) {
+            // `?.let`, not `.let`: locally-echoed user messages carry no conversation, and
+            // unconditionally storing null here wiped the remembered conversation on every sent
+            // message — losing it for good if the app died before the server's reply re-stored it.
+            message.conversation?.id?.let {
+                storeConversationId(it)
+            }
         }
 
         message.conversation?.id?.let { newConversationId ->
@@ -697,7 +901,9 @@ open class ChatViewFragment(
             ChatBackend.message(text)
         }
 
-        pendingFileUploads = ArrayList()
+        // Failed chips stay on screen: an attachment the user saw error must not vanish
+        // silently just because they sent a text message — they can still remove it themselves
+        pendingFileUploads = ArrayList(pendingFileUploads.filter { it.hasUploadError })
         renderFileUploads()
 
         BoostUIEvents.notifyObservers(BoostUIEvents.Event.messageSent)
@@ -985,66 +1191,78 @@ open class ChatViewFragment(
         isWelcomeMessage: Boolean,
         isAwaitingFiles: Boolean
     ) {
-        if (childFragmentManager.findFragmentByTag(response.id) == null) {
-            val fragment = delegate?.getChatMessageFragment(response, animated) ?:
-                getMessageFragment(
-                    response,
-                    animated,
-                    response.source == SourceType.CLIENT,
-                    isWelcomeMessage,
-                    isAwaitingFiles
-                )
+        // Already on screen: view-path messages carry their response id as a view tag,
+        // fragment-path messages as the child fragment's tag. Both checks come before the
+        // delegate is consulted, or a replay would ask the host to build every message part
+        // again only to discard the result.
+        if (chatMessagesLayout.findViewWithTag<View>(response.id) != null) return
+        if (childFragmentManager.findFragmentByTag(response.id) != null) return
 
-            // Add the message
-            childFragmentManager.beginTransaction()
-                .add(
-                    R.id.chat_messages,
-                    fragment,
-                    response.id
-                )
-                .commitAllowingStateLoss()
+        // Messages are drawn as views. A host app that supplies its own message fragments through
+        // [delegate] still gets the fragment path — see `messageFragmentFor`.
+        val fragment = messageFragmentFor(response, animated, isWelcomeMessage, isAwaitingFiles)
+        if (fragment == null) {
+            renderAsView(response, animated, isWelcomeMessage, isAwaitingFiles)
+            return
+        }
 
-            val handler = Handler(Looper.getMainLooper())
-            if (animated) {
-                val pace = customConfig?.chatPanel?.styling?.pace
-                    ?: ChatBackend.customConfig?.chatPanel?.styling?.pace
-                    ?: ChatBackend.config?.chatPanel?.styling?.pace
-                    ?: ChatPanelDefaults.Styling.pace
-                val paceFactor = TimingHelper.calculatePace(pace)
-                val staggerDelay = TimingHelper.calculateStaggerDelay(pace, 1)
-                val timeUntilReveal = TimingHelper.calcTimeToRead(paceFactor)
+        // Add the message
+        childFragmentManager.beginTransaction()
+            .add(
+                R.id.chat_messages,
+                fragment,
+                response.id
+            )
+            .commitAllowingStateLoss()
 
-                // Animate the scroll view to the bottom after each element display
-                response.elements.forEachIndexed { index, _ ->
-                    handler.postDelayed({
-                        if (context != null) {
-                            // Scroll to bottom after x ms
-                            scrollToBottom()
-                        }
-                    }, timeUntilReveal * index + staggerDelay + 100)
-                }
-                if (isAwaitingFiles)
-                    handler.postDelayed({
-                        if (context != null) {
-                            scrollToBottom()
-                        }
-                    }, timeUntilReveal * response.elements.size + staggerDelay + 100)
-            } else {
-                scrollToBottom()
+        val handler = Handler(Looper.getMainLooper())
+        if (animated) {
+            val pace = customConfig?.chatPanel?.styling?.pace
+                ?: ChatBackend.customConfig?.chatPanel?.styling?.pace
+                ?: ChatBackend.config?.chatPanel?.styling?.pace
+                ?: ChatPanelDefaults.Styling.pace
+            val paceFactor = TimingHelper.calculatePace(pace)
+            val staggerDelay = TimingHelper.calculateStaggerDelay(pace, 1)
+            val timeUntilReveal = TimingHelper.calcTimeToRead(paceFactor)
+
+            // Animate the scroll view to the bottom after each element display
+            response.elements.forEachIndexed { index, _ ->
                 handler.postDelayed({
                     if (context != null) {
-                        scrollToBottom(false)
+                        // Scroll to bottom after x ms
+                        scrollToBottom()
                     }
-                }, 150)
+                }, timeUntilReveal * index + staggerDelay + 100)
             }
+            if (isAwaitingFiles)
+                handler.postDelayed({
+                    if (context != null) {
+                        scrollToBottom()
+                    }
+                }, timeUntilReveal * response.elements.size + staggerDelay + 100)
+        } else {
+            scrollToBottom()
+            handler.postDelayed({
+                if (context != null) {
+                    scrollToBottom(false)
+                }
+            }, 150)
         }
     }
 
-    fun scrollToBottom(smoothScroll: Boolean = true) =
-        scrollView.post {
+    fun scrollToBottom(smoothScroll: Boolean = true) {
+        // Deliberately tied to the next layout pass rather than posted: this is normally called
+        // right after content is added, when the container has not been measured yet and its
+        // `bottom` is still the height from before.
+        OneShotPreDrawListener.add(chatMessagesLayout) {
             if (smoothScroll) scrollView.smoothScrollTo(0, chatMessagesLayout.bottom)
             else scrollView.scrollTo(0, chatMessagesLayout.bottom)
         }
+        // A pre-draw listener only fires when a frame is actually drawn. Calls that arrive with
+        // the screen idle — a scroll scheduled 200 ms after an indicator's entry animation has
+        // finished, say — would otherwise wait for some unrelated redraw.
+        chatMessagesLayout.invalidate()
+    }
 
     fun renderFileUploads() {
         // Remove existing file upload fragments
@@ -1101,9 +1319,12 @@ open class ChatViewFragment(
     }
 
     fun hideHumanTypingIndicator() {
-        // Remove any visible "human typing" waiting indicators
+        // Remove any visible "human typing" waiting indicators. Synchronously: the caller may
+        // re-show the indicator in the same pass (agent sent a message while still typing), and
+        // with a queued removal the show would see the old fragment by tag, skip the add, and
+        // the removal would then take the indicator down even though the agent is typing.
         childFragmentManager.findFragmentByTag("humanTyping")?.let {
-            childFragmentManager.beginTransaction().remove(it).commitAllowingStateLoss()
+            childFragmentManager.beginTransaction().remove(it).commitNowAllowingStateLoss()
         }
     }
 
@@ -1170,12 +1391,26 @@ open class ChatViewFragment(
             }
         }
 
+        presentStatusMessage(m, isError, retry, exception)
+    }
+
+    private fun presentStatusMessage(
+        message: String,
+        isError: Boolean,
+        retry: Boolean,
+        exception: Exception? = null
+    ) {
         hideStatusMessage()
+
+        statusMessage = message
+        statusMessageIsError = isError
+        statusMessageRetry = retry
+
         childFragmentManager
             .beginTransaction()
             .add(
                 R.id.chat_messages,
-                getStatusMessageFragment(m, exception, isError, retry),
+                getStatusMessageFragment(message, exception, isError, retry),
                 errorId
             )
             .commitAllowingStateLoss()
@@ -1188,6 +1423,8 @@ open class ChatViewFragment(
     }
 
     fun hideStatusMessage() {
+        statusMessage = null
+
         // Remove any visible status messages
         childFragmentManager.findFragmentByTag(errorId)?.let {
             childFragmentManager.beginTransaction().remove(it).commitAllowingStateLoss()
@@ -1207,7 +1444,8 @@ open class ChatViewFragment(
         val options = customConfig?.chatPanel?.header?.filters?.options
             ?: ChatBackend.customConfig?.chatPanel?.header?.filters?.options
             ?: ChatBackend.config?.chatPanel?.header?.filters?.options
-        val initialFilter = options?.first()
+        // firstOrNull: the options list is server-controlled and can be empty
+        val initialFilter = options?.firstOrNull()
         val hasSelectedFilterValues = selectedFilterValues.isNotEmpty()
 
         var currentFilter: no.boostai.sdk.ChatBackend.Objects.Filter? = null
@@ -1291,16 +1529,19 @@ open class ChatViewFragment(
                 BoostUIEvents.notifyObservers(BoostUIEvents.Event.chatPanelMinimized)
             }
             else -> {
-                // Submenu was clicked
+                // Possibly a filter submenu item — but only claim item ids that actually match a
+                // filter. Anything else (the host activity's own toolbar items, the "up" button)
+                // used to fall through here, wipe the active filter with null and get swallowed.
                 val options = customConfig?.chatPanel?.header?.filters?.options
                     ?: ChatBackend.customConfig?.chatPanel?.header?.filters?.options
                     ?: ChatBackend.config?.chatPanel?.header?.filters?.options
                 val filter = options?.find {
                     it.id == item.itemId
-                }
-                ChatBackend.filterValues = filter?.values
+                } ?: return super.onOptionsItemSelected(item)
+
+                ChatBackend.filterValues = filter.values
                 requireActivity().invalidateOptionsMenu()
-                BoostUIEvents.notifyObservers(BoostUIEvents.Event.filterValuesChanged, filter?.values)
+                BoostUIEvents.notifyObservers(BoostUIEvents.Event.filterValuesChanged, filter.values)
             }
         }
 
@@ -1320,23 +1561,37 @@ open class ChatViewFragment(
 
                 if (!isAdded) return
 
-                // Remove all message fragments
-                val transaction = childFragmentManager.beginTransaction()
-                childFragmentManager.fragments.forEach {
-                    if (it != null && it.isAdded) transaction.remove(it)
-                }
-                transaction.commitAllowingStateLoss()
-                // Empty the responses list
-                responses = ArrayList()
+                clearRenderedConversation()
                 // Hide menu
                 hideMenu()
-                // Start a new conversation
+                // Start a new conversation — a fresh one, so a user token gets its resume again
                 conversationId = null
                 conversationReference = null
+                hasResumedWithUserToken = false
                 startOrResumeConversation()
             }
 
         })
+    }
+
+    /**
+     * Take every rendered message off screen — fragments and views — and reset the response
+     * bookkeeping so the next conversation starts from a clean slate.
+     *
+     * Clearing the fragments alone is not enough: messages are drawn as views, and without the
+     * `removeAllViews` the deleted transcript would stay on screen with the new conversation
+     * rendering below it — and a new welcome message reusing an old response id would be swallowed
+     * by the duplicate check in `render`.
+     */
+    fun clearRenderedConversation() {
+        val transaction = childFragmentManager.beginTransaction()
+        childFragmentManager.fragments.forEach {
+            if (it != null && it.isAdded) transaction.remove(it)
+        }
+        transaction.commitAllowingStateLoss()
+        chatMessagesLayout.removeAllViews()
+        responses = ArrayList()
+        messages = ArrayList()
     }
 
     override fun showMenu() {
@@ -1403,7 +1658,7 @@ open class ChatViewFragment(
 
     override fun closeChat() {
         activity?.finish()
-        ChatBackend.stopPolling()
+        ChatBackend.suspendPolling()
         BoostUIEvents.notifyObservers(BoostUIEvents.Event.chatPanelClosed)
     }
 
@@ -1412,7 +1667,7 @@ open class ChatViewFragment(
         val feedbackFragment = childFragmentManager.findFragmentByTag(feedbackFragmentId)
         if (feedbackFragment != null) {
             BoostUIEvents.notifyObservers(BoostUIEvents.Event.chatPanelClosed)
-            ChatBackend.stopPolling()
+            ChatBackend.suspendPolling()
             activity?.finish();
             return;
         }
@@ -1436,7 +1691,7 @@ open class ChatViewFragment(
         else {
             // If all else fails, close the window
             activity?.finish()
-            ChatBackend.stopPolling()
+            ChatBackend.suspendPolling()
             BoostUIEvents.notifyObservers(BoostUIEvents.Event.chatPanelClosed)
         }
     }
@@ -1450,6 +1705,116 @@ open class ChatViewFragment(
 
             imm?.hideSoftInputFromWindow(view.windowToken, 0)
         }
+
+    /**
+     * Render a message as views — the default path.
+     *
+     * Nothing is paged or trimmed: the whole conversation can stay on screen, because views add
+     * nothing to the activity's saved state.
+     */
+    fun renderAsView(
+        response: Response,
+        animated: Boolean,
+        isWelcomeMessage: Boolean,
+        isAwaitingFiles: Boolean
+    ) {
+        // A conversation can mix paths when a host supplies fragments for only some messages.
+        // Fragment additions are queued while addView lands immediately, so flush the queue first
+        // or this view would jump ahead of an earlier message still waiting in it.
+        childFragmentManager.executePendingTransactions()
+
+        val messageView = delegate?.getChatMessageView(response, animated) ?: getMessageView(
+            response,
+            animated,
+            isWelcomeMessage,
+            isAwaitingFiles
+        )
+        messageView.tag = response.id
+        chatMessagesLayout.addView(messageView)
+        scrollToBottom()
+    }
+
+    /** Open the system file picker; the picked file becomes a pending attachment in the composer. */
+    fun openFilePicker() {
+        Intent(Intent.ACTION_GET_CONTENT).let { intent ->
+            intent.setType("*/*")
+            startActivityForResult(intent, FILE_PICKER_REQUEST)
+        }
+    }
+
+    /**
+     * Open the system file picker for an "upload a file" action button. Unlike [openFilePicker],
+     * the picked file is uploaded and sent as a chat message straight away — the flow a bot that
+     * asks for a file is waiting on, and what `ChatMessageButtonFragment` has always done.
+     */
+    fun openFilePickerForActionUpload() {
+        Intent(Intent.ACTION_GET_CONTENT).let { intent ->
+            intent.setType("*/*")
+            startActivityForResult(intent, ACTION_UPLOAD_REQUEST)
+        }
+    }
+
+    fun getMessageView(
+        response: Response,
+        animated: Boolean,
+        isWelcomeMessage: Boolean,
+        isAwaitingFiles: Boolean
+    ): View = ChatMessageView(
+        requireContext(),
+        response,
+        isBlocked,
+        isWelcomeMessage,
+        isAwaitingFiles,
+        animated,
+        lastAvatarURL,
+        customConfig,
+        chatResponseViewURLHandlingDelegate,
+        delegate,
+        ::openFilePickerForActionUpload,
+        onActionTapped = { disableActionButtons() },
+        onContentChanged = { scrollToBottom() }
+    )
+
+    /**
+     * The message fragment to use for [response], or `null` when it should be drawn as views.
+     *
+     * A host app that overrides [ChatViewFragmentDelegate.getChatMessageFragment] or
+     * [ChatViewFragmentDelegate.getChatMessagePartFragment] keeps the fragment path, so existing
+     * integrations are unaffected by the switch to views. Both hooks default to returning `null`,
+     * which is what selects the view path for everyone else.
+     */
+    fun messageFragmentFor(
+        response: Response,
+        animated: Boolean,
+        isWelcomeMessage: Boolean,
+        isAwaitingFiles: Boolean
+    ): Fragment? {
+        val delegate = delegate ?: return null
+
+        @Suppress("DEPRECATION")
+        delegate.getChatMessageFragment(response, animated)?.let { return it }
+
+        // Asked once per element, and the answers handed to the message fragment: probing here
+        // and letting ChatMessageFragment ask again made the host build every part twice
+        @Suppress("DEPRECATION")
+        val partFragments = response.elements.map { element ->
+            delegate.getChatMessagePartFragment(
+                element,
+                response.id,
+                response.source == SourceType.CLIENT,
+                animated
+            )
+        }
+        if (partFragments.all { it == null }) return null
+
+        return getMessageFragment(
+            response,
+            animated,
+            response.source == SourceType.CLIENT,
+            isWelcomeMessage,
+            isAwaitingFiles
+        ).also { (it as? ChatMessageFragment)?.preparedPartFragments = partFragments }
+    }
 
     fun getMessageFragment(
         response: Response,
@@ -1498,60 +1863,147 @@ open class ChatViewFragment(
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == FILE_PICKER_REQUEST && resultCode == Activity.RESULT_OK) {
             data?.data?.let { uri ->
-                val contentResolver = requireContext().contentResolver
+                copyPickedFileAsync(uri) { fileUpload ->
+                    // The composer chips live in this fragment's view; a copy finishing after a
+                    // rotation has nothing to attach to (pending uploads don't survive rotation
+                    // anyway)
+                    if (!isAdded) return@copyPickedFileAsync
 
-                val mimeType: String = contentResolver.getType(uri) ?: "application/octet-stream"
-                var name = "file.unknown"
+                    val name = fileUpload.filename
+                    val mimeType = fileUpload.mimeType
 
-                val cursor = contentResolver.query(uri, null, null, null, null)
-                cursor?.let {
-                    /*
-                     * Get the column indexes of the data in the Cursor,
-                     * move to the first row in the Cursor, get the data,
-                     * and display it.
-                     */
-                    val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    cursor.moveToFirst()
-                    name = cursor.getString(nameIndex)
+                    val fileExpirationSeconds = customConfig?.chatPanel?.settings?.fileExpirationSeconds
+                        ?: ChatBackend.customConfig?.chatPanel?.settings?.fileExpirationSeconds
+                        ?: ChatBackend.config?.chatPanel?.settings?.fileExpirationSeconds
+
+                    val pendingFile = File(name, mimeType, "", true)
+                    pendingFileUploads.add(pendingFile)
+                    renderFileUploads()
+
+                    ChatBackend.uploadFilesToAPI(listOf(fileUpload), fileExpirationSeconds, object : ChatBackend.APIFileUploadResponseListener {
+                        override fun onFailure(exception: Exception) {
+                            if (!isAdded) return
+
+                            // The chip is this failure's UI. ChatBackend hands the same exception
+                            // to the message observers right after this listener (both posted to
+                            // the main thread, in that order), where onFailure must not also
+                            // raise the banner — the action-button path has no chip and keeps it.
+                            uploadFailureShownAsChip = exception
+                            pendingFileUploads.remove(pendingFile)
+                            pendingFileUploads.add(File(name, mimeType, "", false, true))
+                            renderFileUploads()
+                        }
+                        override fun onResponse(files: List<File>) {
+                            if (!isAdded) return
+
+                            pendingFileUploads.remove(pendingFile)
+                            pendingFileUploads.addAll(files)
+                            renderFileUploads()
+                        }
+                    })
                 }
-                cursor?.close()
+                return
+            }
+        }
 
-                val fileInputStream = requireContext().contentResolver.openInputStream(uri)
-                val outFile =
-                    java.io.File.createTempFile(name, "", requireContext().cacheDir)
-                val outputStream = FileOutputStream(outFile)
-                fileInputStream?.copyTo(outputStream)
-
-                val fileExpirationSeconds = customConfig?.chatPanel?.settings?.fileExpirationSeconds
-                    ?: ChatBackend.customConfig?.chatPanel?.settings?.fileExpirationSeconds
-                    ?: ChatBackend.config?.chatPanel?.settings?.fileExpirationSeconds
-
-                val pendingFile = File(name, mimeType, "", true)
-                pendingFileUploads.add(pendingFile)
-                renderFileUploads()
-
-                val fileUpload = FileUpload(outFile, name, mimeType)
-                ChatBackend.uploadFilesToAPI(listOf(fileUpload), fileExpirationSeconds, object : ChatBackend.APIFileUploadResponseListener {
-                    override fun onFailure(exception: Exception) {
-                        if (!isAdded) return
-
-                        pendingFileUploads.remove(pendingFile)
-                        pendingFileUploads.add(File(name, mimeType, "", false, true))
-                        renderFileUploads()
-                    }
-                    override fun onResponse(files: List<File>) {
-                        if (!isAdded) return
-
-                        pendingFileUploads.remove(pendingFile)
-                        pendingFileUploads.addAll(files)
-                        renderFileUploads()
-                    }
-                })
+        if (requestCode == ACTION_UPLOAD_REQUEST && resultCode == Activity.RESULT_OK) {
+            data?.data?.let { uri ->
+                copyPickedFileAsync(uri) { fileUpload ->
+                    uploadAndSendPickedFile(fileUpload)
+                }
                 return
             }
         }
 
         super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    private fun uploadAndSendPickedFile(fileUpload: FileUpload) {
+        val fileExpirationSeconds = customConfig?.chatPanel?.settings?.fileExpirationSeconds
+            ?: ChatBackend.customConfig?.chatPanel?.settings?.fileExpirationSeconds
+            ?: ChatBackend.config?.chatPanel?.settings?.fileExpirationSeconds
+
+        // Sent as a message the moment the upload lands — the bot flow that showed the
+        // upload button is waiting for it, not for the user to also press send.
+        ChatBackend.uploadFilesToAPI(listOf(fileUpload), fileExpirationSeconds, object : ChatBackend.APIFileUploadResponseListener {
+            override fun onFailure(exception: Exception) {
+                // The bot is waiting for this file, so the failure must be visible — and it is:
+                // every upload failure also reaches the message observers, and this fragment's
+                // observer onFailure raises the banner. Raising it here too showed it twice.
+            }
+            override fun onResponse(files: List<File>) {
+                ChatBackend.sendFiles(files)
+            }
+        })
+    }
+
+    /**
+     * Copy the picked document into the app cache off the main thread — the copy is blocking
+     * I/O against a third-party content provider, and a large file used to freeze the UI for
+     * its duration — then hand the result back on the main thread. A failed copy (file removed
+     * between pick and result, provider errors) shows an error status message.
+     */
+    /** True while a picked file is being copied on the worker thread; gates the attach button. */
+    private var isCopyingPickedFile = false
+
+    private fun copyPickedFileAsync(uri: android.net.Uri, onCopied: (FileUpload) -> Unit) {
+        // Resolved here: the fragment may be detached by the time the worker runs
+        val contentResolver = requireContext().contentResolver
+        val cacheDir = requireContext().cacheDir
+
+        isCopyingPickedFile = true
+        Thread {
+            val fileUpload = try {
+                copyPickedFile(contentResolver, cacheDir, uri)
+            } catch (e: Exception) {
+                Handler(Looper.getMainLooper()).post {
+                    isCopyingPickedFile = false
+                    if (isAdded) {
+                        showStatusMessage(
+                            e.localizedMessage ?: getString(R.string.unknown_error), e, true
+                        )
+                    }
+                }
+                return@Thread
+            }
+
+            // Delivered even if the fragment has been detached meanwhile (rotation during a slow
+            // copy): the action-upload continuation is backend-level and must reach the bot —
+            // continuations that need the fragment guard on isAdded themselves
+            Handler(Looper.getMainLooper()).post {
+                isCopyingPickedFile = false
+                onCopied(fileUpload)
+            }
+        }.start()
+    }
+
+    /** Copy the picked document into the app cache, resolving its display name and MIME type. */
+    private fun copyPickedFile(
+        contentResolver: android.content.ContentResolver,
+        cacheDir: java.io.File,
+        uri: android.net.Uri
+    ): FileUpload {
+        val mimeType: String = contentResolver.getType(uri) ?: "application/octet-stream"
+        var name = "file.unknown"
+
+        contentResolver.query(uri, null, null, null, null)?.use {
+            // Content providers are third-party code: the display-name column, or a first row,
+            // may simply not be there
+            val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex >= 0 && it.moveToFirst()) {
+                name = it.getString(nameIndex) ?: name
+            }
+        }
+
+        // createTempFile rejects prefixes shorter than three characters, and a display name is
+        // no place for path separators
+        val prefix = name.replace('/', '_').padEnd(3, '_')
+        val outFile = java.io.File.createTempFile(prefix, "", cacheDir)
+        contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(outFile).use { output -> input.copyTo(output) }
+        }
+
+        return FileUpload(outFile, name, mimeType)
     }
 
     override fun didTapActionButton(fragment: ChatMessageButtonFragment) {
@@ -1563,12 +2015,35 @@ open class ChatViewFragment(
             val f = fragment as? ChatMessageButtonDelegate
             f?.disableActionButtons()
         }
+        forEachMessageView({ it.disableActionButtons() }, { it.disableActionButtons() })
     }
 
     override fun enableActionButtons(makeInteractable: Boolean) {
         for (fragment in childFragmentManager.fragments) {
             val f = fragment as? ChatMessageButtonDelegate
             f?.enableActionButtons(makeInteractable)
+        }
+        forEachMessageView(
+            { it.enableActionButtons(makeInteractable) },
+            { it.enableActionButtons(makeInteractable) }
+        )
+    }
+
+    /**
+     * Visit every message rendered as views. A host-supplied message view (from
+     * [ChatViewFragmentDelegate.getChatMessageView]) that isn't a [ChatMessageView] can still
+     * take part in button dimming by implementing [ChatMessageButtonDelegate].
+     */
+    private inline fun forEachMessageView(
+        action: (ChatMessageView) -> Unit,
+        hostAction: (ChatMessageButtonDelegate) -> Unit
+    ) {
+        for (index in 0 until chatMessagesLayout.childCount) {
+            when (val child = chatMessagesLayout.getChildAt(index)) {
+                is ChatMessageView -> action(child)
+                is ChatMessageButtonDelegate -> hostAction(child)
+                else -> {}
+            }
         }
     }
 
@@ -1577,7 +2052,18 @@ open class ChatViewFragment(
 
         val handler = Handler(Looper.getMainLooper())
         handler.postDelayed({
-            start()
+            if (context == null) return@postDelayed
+
+            if (ChatBackend.messages.isEmpty()) {
+                // Nothing local yet: retry the initial START/RESUME
+                start()
+            } else {
+                // Mid-conversation, start() would replay locally and stop — the resume gate sees
+                // the existing messages and never touches the network, so the banner would just
+                // vanish without verifying anything. Send a RESUME instead: success re-syncs and
+                // clears the banner, failure re-raises it with Retry intact.
+                ChatBackend.resume(CommandResume(ChatBackend.conversationId))
+            }
         }, 250)
     }
 }

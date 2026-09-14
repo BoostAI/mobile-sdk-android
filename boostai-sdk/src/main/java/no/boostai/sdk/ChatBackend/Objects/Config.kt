@@ -22,8 +22,10 @@ import android.graphics.Color
 import android.os.Parcelable
 import androidx.annotation.ColorInt
 import androidx.annotation.FontRes
-import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
+import kotlinx.parcelize.WriteWith
+import no.boostai.sdk.ChatBackend.Objects.Response.JsonElementParceler
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Serializer
@@ -35,16 +37,17 @@ import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonElement
 
 // Handle hex color serialization
-@Serializer(forClass = Int::class)
-object HexColorSerializer {
+object HexColorSerializer : KSerializer<Int?> {
     override val descriptor: SerialDescriptor
         get() = PrimitiveSerialDescriptor("HexColor", PrimitiveKind.STRING)
-    override fun deserialize(decoder: Decoder): Int {
-        // If we don't have the element type provided by JSON, set it to UNKNOWN
+    override fun deserialize(decoder: Decoder): Int? {
+        // An unparseable color (rgb(...), hsl(...), a typo) degrades to "no value" so the normal
+        // default chain takes over. The old fallback of 0 was a valid-looking transparent black
+        // that painted text and buttons invisible.
         return try {
             Color.parseColor(normalizeColorString(decoder.decodeString()))
         } catch (e: Exception) {
-            0
+            null
         }
     }
 
@@ -68,8 +71,12 @@ object HexColorSerializer {
         }
         return s
     }
-    override fun serialize(encoder: Encoder, value: Int) {
-        encoder.encodeString(java.lang.String.format("#%06X", 0xFFFFFF and value))
+    override fun serialize(encoder: Encoder, value: Int?) {
+        if (value == null) {
+            encoder.encodeNull()
+        } else {
+            encoder.encodeString(java.lang.String.format("#%06X", 0xFFFFFF and value))
+        }
     }
 }
 
@@ -94,7 +101,10 @@ class ConfigV2 (
     @ColorInt var linkBelowColor: Int? = null,
     var avatarStyle: AvatarStyle? = null,
     var linkDisplayStyle: LinkDisplayStyle? = null,
-    var requestConversationFeedback: Boolean? = false,
+    // Default null, not false: "the server omitted the key" must stay distinguishable from "the
+    // server said no" — a false here was baked into the converted config and short-circuited the
+    // fallback chain before the documented default (true) was ever reached.
+    var requestConversationFeedback: Boolean? = null,
     var rememberConversation: Boolean? = false,
     var rememberConversationExpirationDuration: String? = null,
     var removeRememberedConversationOnChatPanelClose: Boolean? = null,
@@ -202,7 +212,10 @@ data class Filter (
     val values: List<String>
 ) : Parcelable
 
-@Serializable
+// The config enums fall back to their default value on unknown input: a new value introduced
+// server-side would otherwise make the entire chat panel config undecodable — no styling, no
+// translated messages.
+@Serializable(with = AvatarShapeSerializer::class)
 enum class AvatarShape {
     @SerialName("rounded")
     ROUNDED,
@@ -210,9 +223,23 @@ enum class AvatarShape {
     SQUARED
 }
 
+@Serializer(forClass = AvatarShape::class)
+object AvatarShapeSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("AvatarShape", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): AvatarShape = try {
+        AvatarShape.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        AvatarShape.ROUNDED
+    }
+    override fun serialize(encoder: Encoder, value: AvatarShape) {
+        encoder.encodeString(value.name.lowercase())
+    }
+}
+
 typealias AvatarStyle = AvatarShape
 
-@Serializable
+@Serializable(with = ConversationPaceSerializer::class)
 enum class ConversationPace {
     @SerialName("glacial")
     GLACIAL,
@@ -230,12 +257,40 @@ enum class ConversationPace {
     SUPERSONIC
 }
 
-@Serializable
+@Serializer(forClass = ConversationPace::class)
+object ConversationPaceSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ConversationPace", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): ConversationPace = try {
+        ConversationPace.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        ConversationPace.NORMAL
+    }
+    override fun serialize(encoder: Encoder, value: ConversationPace) {
+        encoder.encodeString(value.name.lowercase())
+    }
+}
+
+@Serializable(with = LinkDisplayStyleSerializer::class)
 enum class LinkDisplayStyle {
     @SerialName("below")
     BELOW,
     @SerialName("inside")
     INSIDE
+}
+
+@Serializer(forClass = LinkDisplayStyle::class)
+object LinkDisplayStyleSerializer {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("LinkDisplayStyle", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): LinkDisplayStyle = try {
+        LinkDisplayStyle.valueOf(decoder.decodeString().uppercase())
+    } catch (e: Exception) {
+        LinkDisplayStyle.BELOW
+    }
+    override fun serialize(encoder: Encoder, value: LinkDisplayStyle) {
+        encoder.encodeString(value.name.lowercase())
+    }
 }
 
 @Serializable
@@ -518,8 +573,9 @@ data class Settings (
     val conversationId: String? = null,
 
     /// Custom payload to send for each request
-    @IgnoredOnParcel
-    val customPayload: JsonElement? = null,
+    // Parceled like Payload.json — @IgnoredOnParcel silently dropped the host's payload across
+    // process death, so it stopped being sent with every request after a restore
+    val customPayload: @WriteWith<JsonElementParceler> JsonElement? = null,
 
     /// The endpoint to upload files
     val fileUploadServiceEndpointUrl: String? = null,

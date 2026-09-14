@@ -45,17 +45,14 @@ open class ChatMessageButtonsFragment(
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            links = it.getParcelableArrayList(linksKey)
-            customConfig = it.getParcelable(customConfigKey)
+            links = it.getParcelableArrayList(linksKey) ?: links
+            customConfig = it.getParcelable(customConfigKey) ?: customConfig
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putParcelableArrayList(linksKey, links)
-        outState.putParcelable(customConfigKey, customConfig)
-    }
+    // Intentionally no `onSaveInstanceState` override: this fragment is rebuilt by
+    // ChatViewFragment when the conversation is replayed, so persisting its payload here
+    // only added to the activity's state parcel (see ChatViewFragment.onCreate).
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)

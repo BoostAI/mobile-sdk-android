@@ -19,62 +19,51 @@
 
 package no.boostai.sdk.UI
 
-import android.graphics.BlendMode
-import android.graphics.BlendModeColorFilter
-import android.graphics.PorterDuff
-import android.os.Build
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.Animation
-import android.view.animation.AnimationUtils
-import androidx.annotation.ColorInt
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.ChatConfig
-import no.boostai.sdk.R
 
-open class ChatServerWaitingFragment (var customConfig: ChatConfig? = null) :
-    Fragment(R.layout.chat_server_waiting),
-    ChatBackend.ConfigObserver {
-
-    lateinit var dotsWrapper: ViewGroup
-    var dots = arrayOfNulls<View>(3)
+/**
+ * Deprecated. Hosts a [ChatServerWaitingView], which does the work.
+ *
+ * Messages are rendered as views; see [ChatViewFragmentDelegate.getChatMessagePartView].
+ */
+open class ChatServerWaitingFragment(var customConfig: ChatConfig? = null) :
+    Fragment(), ChatBackend.ConfigObserver {
 
     val customConfigKey = "customConfig"
+
+    lateinit var waitingView: ChatServerWaitingView
+    val dotsWrapper: ViewGroup get() = waitingView.dotsWrapper
+    val dots: List<View> get() = waitingView.dots
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val bundle = savedInstanceState ?: arguments
         bundle?.let {
-            customConfig = it.getParcelable(customConfigKey)
+            customConfig = it.getParcelable(customConfigKey) ?: customConfig
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-
-        outState.putParcelable(customConfigKey, customConfig)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        waitingView = ChatServerWaitingView(requireContext(), customConfig)
+        return waitingView
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        dotsWrapper = view.findViewById(R.id.dots);
-
-        view.animation = AnimationUtils.loadAnimation(context, R.anim.chat_message_animate_in)
-        for (index in 0 until dotsWrapper.childCount) {
-            val dotAnimation = AnimationUtils.loadAnimation(context, R.anim.chat_waiting_animate)
-
-            dots[index] = dotsWrapper.getChildAt(index)
-            dotAnimation.repeatMode = Animation.REVERSE;
-            dotAnimation.startOffset = 100.times(index).toLong();
-            dots[index]?.startAnimation(dotAnimation)
-        }
-        ChatBackend.config?.let { updateStyling(it) }
         ChatBackend.addConfigObserver(this)
+        ChatBackend.config?.let { updateStyling(it) }
     }
 
     override fun onDestroyView() {
@@ -84,40 +73,10 @@ open class ChatServerWaitingFragment (var customConfig: ChatConfig? = null) :
     }
 
     fun updateStyling(config: ChatConfig) {
-        @ColorInt val typingBackgroundColor =
-            customConfig?.chatPanel?.styling?.chatBubbles?.typingBackgroundColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.chatBubbles?.typingBackgroundColor
-                ?: config.chatPanel?.styling?.chatBubbles?.typingBackgroundColor
-                ?: customConfig?.chatPanel?.styling?.chatBubbles?.vaBackgroundColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.chatBubbles?.vaBackgroundColor
-                ?: config.chatPanel?.styling?.chatBubbles?.vaBackgroundColor
-                ?: ContextCompat.getColor(requireContext(), R.color.vaBackgroundColor)
-        @ColorInt val typingDotColor =
-            customConfig?.chatPanel?.styling?.chatBubbles?.typingDotColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.chatBubbles?.typingDotColor
-                ?: config.chatPanel?.styling?.chatBubbles?.typingDotColor
-                ?: customConfig?.chatPanel?.styling?.chatBubbles?.vaTextColor
-                ?: ChatBackend.customConfig?.chatPanel?.styling?.chatBubbles?.vaTextColor
-                ?: config.chatPanel?.styling?.chatBubbles?.vaTextColor
-                ?: ContextCompat.getColor(requireContext(), R.color.vaTextColor)
-
-        typingBackgroundColor.let {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                view?.background?.colorFilter =
-                    BlendModeColorFilter(it, BlendMode.SRC_ATOP)
-            else view?.background?.setColorFilter(it, PorterDuff.Mode.SRC_ATOP)
-        }
-        typingDotColor.let { color: Int ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                dots.forEach {
-                    it?.background?.colorFilter = BlendModeColorFilter(color, BlendMode.SRC_ATOP)
-                }
-            else dots.forEach { it?.background?.setColorFilter(color, PorterDuff.Mode.SRC_ATOP) }
-        }
+        if (::waitingView.isInitialized) waitingView.applyStyling()
     }
 
     override fun onConfigReceived(backend: ChatBackend, config: ChatConfig) = updateStyling(config)
 
     override fun onFailure(backend: ChatBackend, error: Exception) {}
-
 }
