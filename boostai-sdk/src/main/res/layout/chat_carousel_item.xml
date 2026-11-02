@@ -2,7 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="260dp"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:layout_marginEnd="8dp"
     android:background="@drawable/rounded_card"
     android:clipToOutline="true"
@@ -15,9 +15,13 @@
         android:scaleType="fitXY"
         android:contentDescription="@string/image" />
 
+    <!-- Cards stretch to the tallest one in the row (match_parent inside a wrap_content
+         horizontal LinearLayout), and the spacer below pins the button to the bottom so buttons
+         line up across cards whose titles wrap to a different number of lines. -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:orientation="vertical"
         android:padding="12dp">
 
@@ -38,6 +42,11 @@
             android:textSize="17sp"
             android:lines="2"
             android:ellipsize="end" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
 
         <TextView
             android:id="@+id/carousel_item_button"

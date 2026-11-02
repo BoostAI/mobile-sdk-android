@@ -303,6 +303,59 @@ class ViewRegressionTest {
      *  drawable. Styling a carousel used to tint the shared constant state, and since a tint
      *  filter masks setColor completely, every consent button created afterwards painted in the
      *  action-button colour for the rest of the process. */
+    /** Cards whose titles wrap to a different number of lines must still line up their buttons —
+     *  every card stretches to the tallest one and pins its button to the bottom. */
+    @Test
+    fun carouselButtonsLineUpAcrossCards() {
+        val template = CarouselTemplate(
+            template = "carousel",
+            elements = listOf(
+                CarouselElement(
+                    title = "A title long enough to wrap onto a second line",
+                    body = "First card",
+                    buttonText = "Go"
+                ),
+                CarouselElement(title = "Short", body = "Second card", buttonText = "Go")
+            )
+        )
+
+        ActivityScenario.launch(SavedStateTestActivity::class.java).use { scenario ->
+            lateinit var carousel: ChatMessageCarouselView
+            scenario.onActivity { activity ->
+                carousel = ChatMessageCarouselView(activity, template, animated = false)
+                activity.findViewById<ViewGroup>(android.R.id.content).addView(
+                    carousel,
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                )
+            }
+
+            Thread.sleep(500)
+
+            scenario.onActivity {
+                val cards = (0 until carousel.container.childCount)
+                    .map { carousel.container.getChildAt(it) }
+                val titles = cards.map {
+                    it.findViewById<android.widget.TextView>(R.id.carousel_item_title)
+                }
+                assertTrue(
+                    "the first title must wrap for this test to mean anything",
+                    titles[0].lineCount > titles[1].lineCount
+                )
+
+                val buttonTops = cards.map {
+                    val location = IntArray(2)
+                    it.findViewById<View>(R.id.carousel_item_button).getLocationOnScreen(location)
+                    location[1]
+                }
+                assertEquals("buttons must line up", buttonTops[0], buttonTops[1])
+                assertEquals("cards must be equally tall", cards[0].height, cards[1].height)
+            }
+        }
+    }
+
     @Test
     fun carouselStylingDoesNotRepaintConsentButtons() {
         val template = CarouselTemplate(
