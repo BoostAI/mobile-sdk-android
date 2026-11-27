@@ -6,13 +6,18 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import no.boostai.sdk.ChatBackend.ChatBackend
 import no.boostai.sdk.ChatBackend.Objects.Response.*
+import no.boostai.sdk.UI.ChatMessageView
 import no.boostai.sdk.UI.ChatViewFragment
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** A new message must bring the conversation back to the bottom. */
+/**
+ * A new message must bring the conversation back to the bottom — unless its newest part is taller
+ * than the screen, which must then be shown from its top.
+ */
 @RunWith(AndroidJUnit4::class)
 class ChatViewScrollTest {
 
@@ -95,5 +100,65 @@ class ChatViewScrollTest {
         val remaining = runScrollScenario(animated = false)
         println("SCROLL not animated: $remaining px left below the fold")
         assertTrue("Not scrolled to the bottom — $remaining px remain below", remaining <= 8)
+    }
+
+    /** A part taller than the screen, such as a carousel above an open keyboard, must not be
+     *  scrolled past: its top (the image and title) has to stay in view. */
+    @Test
+    fun aTallPartIsShownFromItsTop() {
+        ChatBackend.messages = ArrayList((0 until 5).map { APIMessage(response = response(it)) })
+        var topInView = Int.MIN_VALUE
+        var partTallerThanScreen = false
+        val tall = Response(
+            id = "r-tall",
+            source = SourceType.BOT,
+            language = "en-US",
+            elements = listOf(
+                Element(Payload(text = "Short intro."), ElementType.TEXT),
+                Element(Payload(text = "A very tall part. ".repeat(300)), ElementType.TEXT)
+            )
+        )
+
+        try {
+            ActivityScenario.launch(SavedStateTestActivity::class.java).use { scenario ->
+                lateinit var fragment: ChatViewFragment
+                scenario.onActivity { activity ->
+                    fragment = ChatViewFragment()
+                    fragment.startConversationOnLoad = false
+                    activity.supportFragmentManager.beginTransaction()
+                        .add(android.R.id.content, fragment, "chat").commitNow()
+                    fragment.startOrResumeConversation()
+                }
+                Thread.sleep(1500)
+
+                scenario.onActivity {
+                    fragment.responses.add(tall)
+                    fragment.render(tall, true, isWelcomeMessage = false, isAwaitingFiles = false)
+                }
+                Thread.sleep(5000)
+
+                scenario.onActivity {
+                    val scrollView = fragment.requireView()
+                        .findViewById<ScrollView>(R.id.chat_messages_scrollview)
+                    val message = fragment.requireView()
+                        .findViewWithTag<ChatMessageView>("r-tall")
+                    val part = message.latestPart
+                    assertNotNull(part)
+                    partTallerThanScreen = part!!.height > scrollView.height
+
+                    val rect = android.graphics.Rect()
+                    part.getDrawingRect(rect)
+                    scrollView.offsetDescendantRectToMyCoords(part, rect)
+                    topInView = rect.top - scrollView.scrollY
+                }
+            }
+        } finally {
+            ChatBackend.messages = ArrayList()
+        }
+
+        assumeTrue("The part fits on this screen", partTallerThanScreen)
+        println("SCROLL tall part: top is $topInView px below the top of the scroll view")
+        assertTrue("The top of the tall part was scrolled out of view ($topInView px)", topInView >= 0)
+        assertTrue("Scrolled short of the tall part's top ($topInView px)", topInView <= 100)
     }
 }

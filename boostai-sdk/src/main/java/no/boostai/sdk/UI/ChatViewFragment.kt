@@ -24,6 +24,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -79,6 +80,8 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.Date
 import java.util.UUID
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.time.Duration
 
 open class ChatViewFragment(
@@ -1255,13 +1258,33 @@ open class ChatViewFragment(
         // right after content is added, when the container has not been measured yet and its
         // `bottom` is still the height from before.
         OneShotPreDrawListener.add(chatMessagesLayout) {
-            if (smoothScroll) scrollView.smoothScrollTo(0, chatMessagesLayout.bottom)
-            else scrollView.scrollTo(0, chatMessagesLayout.bottom)
+            val target = scrollTarget()
+            if (smoothScroll) scrollView.smoothScrollTo(0, target)
+            else scrollView.scrollTo(0, target)
         }
         // A pre-draw listener only fires when a frame is actually drawn. Calls that arrive with
         // the screen idle — a scroll scheduled 200 ms after an indicator's entry animation has
         // finished, say — would otherwise wait for some unrelated redraw.
         chatMessagesLayout.invalidate()
+    }
+
+    /**
+     * The bottom of the conversation, unless the newest part is taller than the visible area:
+     * then only far enough to bring its top to the top of the screen, so a tall part such as a
+     * carousel is shown from its image and title down instead of cut off at the top.
+     */
+    private fun scrollTarget(): Int {
+        val bottom = max(0, chatMessagesLayout.bottom - scrollView.height)
+        val last = chatMessagesLayout.getChildAt(chatMessagesLayout.childCount - 1)
+            ?: return bottom
+        val anchor = (last as? ChatMessageView)?.latestPart ?: last
+
+        val rect = Rect()
+        anchor.getDrawingRect(rect)
+        scrollView.offsetDescendantRectToMyCoords(anchor, rect)
+        val anchorTop = rect.top - (8 * resources.displayMetrics.density).toInt()
+
+        return min(bottom, max(0, anchorTop))
     }
 
     fun renderFileUploads() {

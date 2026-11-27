@@ -90,6 +90,12 @@ open class ChatMessageView(
      */
     private val revealHandler = Handler(Looper.getMainLooper())
 
+    /** The most recently revealed part, not counting the typing indicator shown between parts. */
+    val latestPart: View?
+        get() = (partsContainer.childCount - 1 downTo 0)
+            .map { partsContainer.getChildAt(it) }
+            .firstOrNull { it !is ChatServerWaitingView }
+
     init {
         orientation = VERTICAL
         // Client messages hug the right edge, as ChatMessageFragment does in onViewCreated
